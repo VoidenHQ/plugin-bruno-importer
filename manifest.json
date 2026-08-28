@@ -1,13 +1,13 @@
 {
   "id": "bruno-importer",
   "name": "Bruno Collection Importer",
-  "description": "Import a Bruno (usebruno.com) .bru request file into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
-  "version": "1.0.0",
+  "description": "Import a Bruno (usebruno.com) .bru request file, or a whole OpenCollection YAML/JSON export, into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
+  "version": "1.1.0",
   "voidenVersion": ">=2.0.0",
   "author": "Phurpa Tsering",
   "type": "community",
   "priority": 30,
-  "readme": "Import a Bruno .bru request file into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
+  "readme": "Import a Bruno .bru request file, or a whole OpenCollection YAML/JSON export, into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
   "mainProcess": false,
   "permissions": [],
   "capabilities": {
@@ -17,8 +17,8 @@
           "id": "bruno-importer-btn",
           "location": "sidebar-left",
           "icon": "Download",
-          "tooltip": "Import Bruno Request",
-          "description": "Opens file picker to select and import a Bruno .bru request file"
+          "tooltip": "Import Bruno Request/Collection",
+          "description": "Opens file picker to select and import a Bruno .bru request file or an OpenCollection YAML/JSON export"
         }
       ],
       "description": "Adds import button to left sidebar for easy request import"
@@ -53,6 +53,7 @@
   },
   "features": [
     "Import a single Bruno (.bru) request file",
+    "Import a whole OpenCollection YAML/JSON export (Bruno 3.0+'s Export Collection output) — walks folders and requests, producing one .void file per request",
     "Support for all HTTP methods (GET, POST, PUT, DELETE, PATCH, etc.)",
     "Import headers and convert to headers-table blocks",
     "Import query and path params (params:query / params:path) and convert to query-table / path-table blocks",

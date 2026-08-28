@@ -1,21 +1,26 @@
 /**
  * Bruno Collection Importer Extension
  *
- * Imports a single Bruno (.bru) HTTP request file and converts it to a
- * Voiden .void request file.
+ * Supports two different Bruno export shapes:
  *
- * Bruno stores one request per file natively (unlike a Postman/Insomnia
- * export, which bundles a whole collection into one JSON/YAML file), so
- * this plugin's UX matches that granularity: open a single .bru file as a
- * tab, click Import. There is no folder-tree/collection import here — see
- * this plugin's skill.md for why, and for how to consolidate several
- * imported requests into one multi-section CRUD file afterward.
+ * 1. A single classic Bruno `.bru` HTTP request file — Bruno's native
+ *    on-disk format, one request per file. Converts to exactly one Voiden
+ *    .void file.
+ * 2. A whole OpenCollection YAML/JSON export — the output of Bruno 3.0+'s
+ *    "Export Collection" button, a single file bundling an entire
+ *    folder/request tree (closer in shape to a Postman/Insomnia export).
+ *    Walks the tree, producing one .void file per request plus matching
+ *    folders — see src/utils/openCollectionConverter.ts.
+ *
+ * BrunoImportButton picks which path to run based on which shape the
+ * opened tab's content actually matches.
  */
 
 import { PluginContext } from '@voiden/sdk/ui';
 import React from 'react';
 import { BrunoImportButton } from './components/BrunoImportButton';
 import { looksLikeBruRequestFile } from './utils/types';
+import { looksLikeOpenCollection } from './utils/opencollectionTypes';
 
 const brunoImportPlugin = (context: PluginContext) => {
   const showToast = (context as any)?.ui?.showToast as
@@ -33,13 +38,15 @@ const brunoImportPlugin = (context: PluginContext) => {
           }),
         predicate: (tab) => {
           const title = tab.title ?? '';
-          if (!title.endsWith('.bru')) return false;
-
-          // meta{}/method-block markers sit near the top of a request file,
-          // so a bounded prefix is enough — same approach as the
-          // Postman/Insomnia predicates.
           const c = (tab.content ?? '').slice(0, 65536);
-          return looksLikeBruRequestFile(c);
+
+          if (title.endsWith('.bru')) {
+            return looksLikeBruRequestFile(c);
+          }
+          if (title.endsWith('.yml') || title.endsWith('.yaml') || title.endsWith('.json')) {
+            return looksLikeOpenCollection(c);
+          }
+          return false;
         },
       });
     },

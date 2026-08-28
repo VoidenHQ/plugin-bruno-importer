@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { importBruRequest } from '../utils/converter';
-import { X } from 'lucide-react';
+import { importOpenCollection, looksLikeOpenCollection } from '../utils/openCollectionConverter';
+import { X, XCircle } from 'lucide-react';
 
 interface BrunoImportButtonProps {
   tab: {
@@ -17,13 +18,22 @@ interface BrunoImportButtonProps {
 export const BrunoImportButton = ({ tab, showToast }: BrunoImportButtonProps) => {
   const [isImporting, setIsImporting] = useState(false);
   const [imported, setImported] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
+  const cancelSignalRef = useRef<{ cancelled: boolean } | null>(null);
   const queryClient = useQueryClient();
+
+  const handleCancel = () => {
+    if (cancelSignalRef.current) cancelSignalRef.current.cancelled = true;
+    setIsImporting(false);
+    setProgress({ current: 0, total: 0 });
+  };
 
   const handleImport = async () => {
     try {
       setError(null);
       setIsImporting(true);
+      setProgress({ current: 0, total: 0 });
 
       const projects = queryClient.getQueryData<{
         projects: { path: string; name: string }[];
@@ -43,38 +53,81 @@ export const BrunoImportButton = ({ tab, showToast }: BrunoImportButtonProps) =>
       }
 
       if (!content || content.trim() === '') {
-        setError('Bruno request file is empty');
+        setError('Bruno file is empty');
         setIsImporting(false);
         return;
       }
 
-      await importBruRequest(content, activeProject);
+      if (looksLikeOpenCollection(content)) {
+        // Whole-collection import — can produce many files, so tracks
+        // progress and supports cancellation, same as Postman/Insomnia.
+        const signal = { cancelled: false };
+        cancelSignalRef.current = signal;
+
+        await importOpenCollection(
+          content,
+          activeProject,
+          (current, total) => setProgress({ current, total }),
+          (itemName, err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            showToast?.(`Failed to import "${itemName}": ${message}`, 'error');
+          },
+          signal,
+        );
+
+        if (signal.cancelled) {
+          setIsImporting(false);
+          setProgress({ current: 0, total: 0 });
+          return;
+        }
+      } else {
+        // Single .bru request file
+        await importBruRequest(content, activeProject);
+      }
 
       setIsImporting(false);
       setImported(true);
       showToast?.('Imported into Voiden', 'success');
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Failed to import request';
+      const errorMessage = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Failed to import';
       setError(errorMessage);
+      setProgress({ current: 0, total: 0 });
       setIsImporting(false);
     }
   };
 
   const dismissError = () => setError(null);
 
+  const isInProgress = isImporting && progress.total > 0 && progress.current < progress.total;
+
+  const getButtonText = () => {
+    if (isInProgress) return `Generating files... ${progress.current}/${progress.total}`;
+    if (isImporting) return 'Importing...';
+    if (imported) return progress.total > 0 ? `Generated ${progress.total} files` : 'Imported';
+    return 'Import into Voiden';
+  };
+
   return (
     <div className="flex flex-col gap-1">
       {!error && (
-        <button
-          className={`px-2 py-0.5 rounded-sm text-sm transition-all duration-200 ${
-            imported ? 'bg-green-500 hover:bg-green-600 text-white' : 'bg-panel hover:bg-active text-foreground'
-          }`}
-          onClick={handleImport}
-          disabled={isImporting}
-          title="Import Bruno request"
-        >
-          {isImporting ? 'Importing...' : imported ? 'Imported' : 'Import into Voiden'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className={`px-2 py-0.5 rounded-sm text-sm transition-all duration-200 ${
+              imported ? 'bg-green-500 hover:bg-green-600 text-white' : 'bg-panel hover:bg-active text-foreground'
+            }`}
+            onClick={handleImport}
+            disabled={isImporting}
+            title="Import Bruno request or collection"
+          >
+            {getButtonText()}
+          </button>
+
+          {isInProgress && (
+            <button onClick={handleCancel} title="Cancel" className="text-muted hover:text-red-500 transition-colors">
+              <XCircle size={15} />
+            </button>
+          )}
+        </div>
       )}
 
       {error && (

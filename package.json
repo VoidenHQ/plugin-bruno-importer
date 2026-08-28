@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "private": false,
-  "description": "Import a Bruno (usebruno.com) .bru request file into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
+  "description": "Import a Bruno (usebruno.com) .bru request file, or a whole OpenCollection YAML/JSON export, into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
   "main": "./src/plugin.ts",
   "scripts": {
     "build": "node build.mjs && node build-main.mjs",
@@ -17,9 +17,11 @@
     "react-dom": "^18.2.0"
   },
   "dependencies": {
-    "@usebruno/lang": "^0.38.0"
+    "@usebruno/lang": "^0.38.0",
+    "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@voiden/sdk": "latest",
     "esbuild": "^0.20.0",
     "typescript": "^5.0.0",
