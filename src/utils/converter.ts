@@ -1,5 +1,4 @@
 import { bruToJsonV2, bruToEnvJsonV2 } from '@usebruno/lang';
-import yaml from 'js-yaml';
 import type { BruJson, BruAuth, BruAssertion, BruVar, BruMultipartField } from './types';
 import { getVoidenApiHelpers } from './useVoidenApiHelpers';
 import { buildOAuth1Block, buildOAuth2Block, buildWebSocketRequestBlock, buildGrpcRequestBlock, normalizeGrpcCallType } from './blockBuilders';
@@ -523,65 +522,38 @@ export function parseBruEnvironment(raw: string): BruEnvVariable[] {
 }
 
 /**
- * Import a Bruno environment into Voiden's env-*.yaml tree, under the
- * "default" profile — see the base voiden skill's "Environment Variables"
- * section for the full YAML shape. Non-secret vars go to env-public.yaml,
- * secret ones (Bruno's vars:secret, which carry no value — just a name to
- * fill in locally) go to env-private.yaml, mirroring Voiden's own
- * public/private split. Disabled vars are skipped, not imported disabled —
- * Voiden's env YAML has no per-variable enabled/disabled flag to preserve
- * that state in.
+ * Import a Bruno environment via Voiden's own `electron.env.extendEnvs` IPC
+ * (the same one postman-import and insomnia-importer's environment handling
+ * both use) — it resolves the active project/profile, creates or extends
+ * the named environment node, and merges into the existing env-public.yaml
+ * tree without disturbing other environments already in the project. See
+ * the base voiden skill's "Environment Variables" section for the YAML
+ * shape this writes into.
  *
- * Merges into the existing file rather than overwriting it: reads the
- * current YAML (if any), adds/replaces only the node named after this
- * environment, and writes the merged tree back — so importing one Bruno
- * environment never destroys others already in the project.
+ * Disabled vars are skipped, not imported disabled — Voiden's env YAML has
+ * no per-variable enabled/disabled flag to preserve that state in. Secret
+ * vars (Bruno's `vars:secret`, which carry no value — just a name to fill
+ * in locally) go through the same call as everything else: `extendEnvs` has
+ * no separate "private file" target, and Bruno's secret entries never carry
+ * a real value to begin with, so there's nothing sensitive to protect by
+ * routing them differently.
  */
 export const importBruEnvironment = async (
   content: string,
   envName: string,
   activeProject: string,
-): Promise<{ success: true; profile: string }> => {
+): Promise<{ success: true; imported: number }> => {
   if (!activeProject) {
     throw new Error('No active project found');
   }
 
-  const variables = parseBruEnvironment(content);
-  // Dots split the env tree into parent/child nodes (see base skill) — a
-  // Bruno environment name is always a single flat node, so any dot in it
-  // would be misread as a path separator; convert to hyphens like the app
-  // itself does when a dot is typed into a name.
-  const nodeName = envName.replace(/\./g, '-') || 'default';
+  const variables = parseBruEnvironment(content)
+    .filter((v) => v.enabled !== false)
+    .map((v) => ({ key: v.name, value: v.value ?? '' }));
 
-  const publicVars: Record<string, string> = {};
-  const privateVars: Record<string, string> = {};
-  for (const v of variables) {
-    if (v.enabled === false) continue;
-    (v.secret ? privateVars : publicVars)[v.name] = v.value ?? '';
+  if (variables.length > 0) {
+    await (window as any).electron?.env?.extendEnvs(`${envName} environment`, variables, envName);
   }
 
-  const electron = (window as any).electron;
-  const voidenDirExists = await electron?.files?.getDirectoryExist(activeProject, '.voiden');
-  if (!voidenDirExists) {
-    await electron?.files?.createDirectory(activeProject, '.voiden');
-  }
-
-  const writeMerged = async (fileName: string, vars: Record<string, string>) => {
-    if (Object.keys(vars).length === 0) return;
-    const filePath = `${activeProject}/.voiden/${fileName}`;
-    let tree: Record<string, any> = {};
-    try {
-      const existing = await electron?.files?.read(filePath);
-      if (existing) tree = (yaml.load(existing) as Record<string, any>) ?? {};
-    } catch {
-      // File doesn't exist yet — start with an empty tree
-    }
-    tree[nodeName] = { ...(tree[nodeName] ?? {}), variables: { ...(tree[nodeName]?.variables ?? {}), ...vars } };
-    await electron?.files?.write(filePath, yaml.dump(tree));
-  };
-
-  await writeMerged('env-public.yaml', publicVars);
-  await writeMerged('env-private.yaml', privateVars);
-
-  return { success: true, profile: 'default' };
+  return { success: true, imported: variables.length };
 };

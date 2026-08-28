@@ -3,7 +3,7 @@
 A [Voiden](https://voiden.md) plugin that imports **Bruno (usebruno.com)** exports directly into your Voiden workspace. It handles three different Bruno file shapes:
 
 1. **A single classic `.bru` request file** — Bruno's native on-disk format, one request per file. Covers HTTP, GraphQL, gRPC, and WebSocket requests. Import produces one `.void` file.
-2. **A Bruno environment file** (`environments/<name>.bru`) — imports its variables into Voiden's own `env-public.yaml`/`env-private.yaml` tree, merged with any existing environments.
+2. **A Bruno environment file** (`environments/<name>.bru`) — imports its variables as its own named Voiden environment, merged with any existing environments.
 3. **A whole OpenCollection YAML/JSON export** — the output of Bruno 3.0+'s **Export Collection** button (this is what most users reach for today). It's an entire folder/request tree in one file, closer in shape to a Postman/Insomnia export. Import walks the tree and produces many `.void` files + matching folders.
 
 ## What it does
@@ -51,7 +51,7 @@ Bruno's on-disk classic format is `bruno.json` plus a folder tree of individual 
 
 1. Open a Bruno `.bru` request/environment file, or a whole OpenCollection `.yml`/`.yaml`/`.json` export, in Voiden.
 2. At the top right corner, you'll see **Import into Voiden**.
-3. For a `.bru` request file: the plugin creates one `.void` file with the same name as the request, in your active project. For an environment file: it merges the variables into `.voiden/env-public.yaml`/`env-private.yaml`. For an OpenCollection export: the plugin recreates the folder/request tree under your active project, with progress tracking since it can produce many files.
+3. For a `.bru` request file: the plugin creates one `.void` file with the same name as the request, in your active project. For an environment file: it imports the variables as their own named Voiden environment. For an OpenCollection export: the plugin recreates the folder/request tree under your active project, with progress tracking since it can produce many files.
 
 ## Building
 
