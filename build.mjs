@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { build } from 'vite'
 import { readFileSync, existsSync } from 'fs'
+import { createRequire } from 'module'
 
+const require = createRequire(import.meta.url)
 const manifest = JSON.parse(readFileSync('./manifest.json', 'utf8'))
 const pluginId = manifest.id
 const entry = existsSync('./src/plugin.tsx') ? './src/plugin.tsx'
@@ -119,6 +121,16 @@ await build({
     { name: 'node-buffer', enforce: 'pre', resolveId(id) { if (id === 'buffer') return '\0buf' }, load(id) { if (id === '\0buf') return 'export const Buffer=globalThis.Buffer;export default{Buffer:globalThis.Buffer}' } },
   ],
   esbuild: { jsx: 'automatic' },
+  resolve: {
+    alias: {
+      // ohm-js is a dual CJS/ESM package. Vite's default resolution picks
+      // its "module" (ESM) build, which only exports { default: ohm } —
+      // but @usebruno/lang's bundled code does require('ohm-js').grammar(...),
+      // expecting the CJS shape (ohm-js/index.js) where .grammar sits
+      // directly on module.exports. Force the CJS entry so that holds.
+      'ohm-js': require.resolve('ohm-js'),
+    },
+  },
   build: {
     lib: { entry, formats: ['es'], fileName: () => `${pluginId}.js` },
     outDir: 'dist',
