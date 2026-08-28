@@ -1,0 +1,72 @@
+{
+  "id": "bruno-importer",
+  "name": "Bruno Collection Importer",
+  "description": "Import a Bruno (usebruno.com) .bru request file into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
+  "version": "1.0.0",
+  "voidenVersion": ">=2.0.0",
+  "author": "Phurpa Tsering",
+  "type": "community",
+  "priority": 30,
+  "readme": "Import a Bruno .bru request file into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
+  "mainProcess": false,
+  "permissions": [],
+  "capabilities": {
+    "ui": {
+      "buttons": [
+        {
+          "id": "bruno-importer-btn",
+          "location": "sidebar-left",
+          "icon": "Download",
+          "tooltip": "Import Bruno Request",
+          "description": "Opens file picker to select and import a Bruno .bru request file"
+        }
+      ],
+      "description": "Adds import button to left sidebar for easy request import"
+    },
+    "fileSystem": {
+      "operations": [
+        "create-directory",
+        "write-file"
+      ],
+      "description": "Creates a .void file from a Bruno request"
+    },
+    "integration": {
+      "dependencies": [
+        {
+          "extension": "voiden-rest-api",
+          "reason": "Uses voiden-rest-api helpers to generate compatible REST API blocks",
+          "required": true
+        },
+        {
+          "extension": "voiden-graphql",
+          "reason": "Renders the gqlquery/gqlvariables blocks generated from a Bruno request's GraphQL body",
+          "required": false
+        },
+        {
+          "extension": "simple-assertions",
+          "reason": "Renders the assertions-table block generated from a Bruno request's assert{} block",
+          "required": false
+        }
+      ],
+      "description": "Depends on voiden-rest-api extension for REST block generation"
+    }
+  },
+  "features": [
+    "Import a single Bruno (.bru) request file",
+    "Support for all HTTP methods (GET, POST, PUT, DELETE, PATCH, etc.)",
+    "Import headers and convert to headers-table blocks",
+    "Import query and path params (params:query / params:path) and convert to query-table / path-table blocks",
+    "Convert :param URL segments to Voiden's {param} placeholder style",
+    "Import JSON, XML, and plain-text bodies",
+    "Import form-urlencoded bodies as url-table blocks",
+    "Import multipart form bodies as multipart-table blocks, with file fields resolved as fileLink attachments when the file still exists at its original path",
+    "Import a raw file body as a restFile placeholder block",
+    "Convert a GraphQL body into gqlquery/gqlvariables blocks",
+    "Convert auth (basic/bearer/apikey/digest/awsv4/ntlm) into a native auth block",
+    "Convert a well-formed assert{} block into a live assertions-table block; entries using an unrecognized operator are imported disabled with the original expression preserved",
+    "Import pre-request/post-response scripts and vars as commented-out pre_script/post_script blocks for manual review",
+    "Sanitize file names for filesystem compatibility",
+    "Uses voiden-rest-api helpers for consistent block generation",
+    "Generates markdown with proper YAML frontmatter"
+  ]
+}
