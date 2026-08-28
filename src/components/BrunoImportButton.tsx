@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { importBruRequest } from '../utils/converter';
+import { importBruRequest, importBruEnvironment } from '../utils/converter';
+import { looksLikeBruEnvironmentFile } from '../utils/types';
 import { importOpenCollection, looksLikeOpenCollection } from '../utils/openCollectionConverter';
 import { X, XCircle } from 'lucide-react';
 
@@ -80,6 +81,11 @@ export const BrunoImportButton = ({ tab, showToast }: BrunoImportButtonProps) =>
           setProgress({ current: 0, total: 0 });
           return;
         }
+      } else if (looksLikeBruEnvironmentFile(content)) {
+        // Environment file — no request name in the content itself, so the
+        // environment's name comes from its filename (Bruno's own convention).
+        const envName = (tab.title || 'Bruno Environment').replace(/\.bru$/i, '');
+        await importBruEnvironment(content, envName, activeProject);
       } else {
         // Single .bru request file
         await importBruRequest(content, activeProject);

@@ -3,4 +3,6 @@
 declare module '@usebruno/lang' {
   export function bruToJsonV2(content: string): unknown;
   export function jsonToBruV2(json: unknown): string;
+  export function bruToEnvJsonV2(content: string): unknown;
+  export function envJsonToBruV2(json: unknown): string;
 }

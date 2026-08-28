@@ -1,6 +1,8 @@
-import { bruToJsonV2 } from '@usebruno/lang';
+import { bruToJsonV2, bruToEnvJsonV2 } from '@usebruno/lang';
+import yaml from 'js-yaml';
 import type { BruJson, BruAuth, BruAssertion, BruVar, BruMultipartField } from './types';
 import { getVoidenApiHelpers } from './useVoidenApiHelpers';
+import { buildOAuth1Block, buildOAuth2Block, buildWebSocketRequestBlock, buildGrpcRequestBlock, normalizeGrpcCallType } from './blockBuilders';
 
 /**
  * Sanitize file names to be filesystem-safe — identical logic to
@@ -73,14 +75,38 @@ function buildTableContent(rows: Array<{ disabled?: boolean; cells: string[] }>)
 /**
  * Convert Bruno's `auth { <type>: {...} }` config into a Voiden `auth` block.
  * Bruno's shape is already a plain object per type (no Postman-style
- * array-of-{key,value} pairs to unpack), so this is a direct field mapping.
- * `oauth2` and `wsse` are skipped rather than guessed at — oauth2's shape
- * varies by grant type and rarely carries a resolved token, and Voiden's
- * auth block has no wsse slot (see voiden-advanced-auth's skill for the
- * full supported-type list).
+ * array-of-{key,value} pairs to unpack), so this is mostly a direct field
+ * mapping. `wsse` is skipped rather than guessed at — Voiden's auth block
+ * has no wsse slot (see voiden-advanced-auth's skill for the full
+ * supported-type list).
  */
 function buildAuthBlock(auth: BruAuth | undefined, mode: string): any | null {
   if (!auth || mode === 'none' || mode === 'inherit') return null;
+
+  if (mode === 'oauth1' && auth.oauth1) {
+    return buildOAuth1Block({
+      consumerKey: auth.oauth1.consumerKey,
+      consumerSecret: auth.oauth1.consumerSecret,
+      accessToken: auth.oauth1.accessToken,
+      accessTokenSecret: auth.oauth1.accessTokenSecret,
+      signatureMethod: auth.oauth1.signatureMethod,
+    });
+  }
+  if (mode === 'oauth2' && auth.oauth2) {
+    const o = auth.oauth2;
+    return buildOAuth2Block({
+      grantType: o.grantType,
+      authUrl: 'authorizationUrl' in o ? o.authorizationUrl : undefined,
+      tokenUrl: 'accessTokenUrl' in o ? o.accessTokenUrl : undefined,
+      clientId: o.clientId,
+      clientSecret: 'clientSecret' in o ? o.clientSecret : undefined,
+      username: 'username' in o ? o.username : undefined,
+      password: 'password' in o ? o.password : undefined,
+      scope: o.scope,
+      callbackUrl: 'callbackUrl' in o ? o.callbackUrl : undefined,
+      state: 'state' in o ? o.state : undefined,
+    });
+  }
 
   const rows: [string, string][] = [];
   let authType: string;
@@ -127,7 +153,7 @@ function buildAuthBlock(auth: BruAuth | undefined, mode: string): any | null {
       break;
     }
     default:
-      // wsse, oauth2, or anything else — skip rather than guess at a shape
+      // wsse or anything else unrecognized — skip rather than guess at a shape
       return null;
   }
 
@@ -286,26 +312,48 @@ function detectGraphqlOperationType(query: string): 'query' | 'mutation' | 'subs
 export const convertBruRequestToVoidenSchema = async (data: BruJson): Promise<string> => {
   try {
     const helpers = getVoidenApiHelpers();
+
+    // gRPC/WS requests produce a wholly different block (socket-request,
+    // not request+headers+body) — see buildGrpcRequestBlock/
+    // buildWebSocketRequestBlock in blockBuilders.ts for exactly what does
+    // and doesn't carry over (metadata and a stored request message have no
+    // Voiden target today).
+    if (data.meta.type === 'grpc' && data.grpc) {
+      const url = data.grpc.url ?? '';
+      const block = buildGrpcRequestBlock(url, data.grpc.protoPath, data.grpc.method, normalizeGrpcCallType(data.grpc.methodType));
+      let content = helpers.convertBlocksToVoidFile(data.meta.name, [block]);
+      if (data.docs) content += `\n${data.docs}\n`;
+      return content;
+    }
+    if (data.meta.type === 'ws' && data.ws) {
+      const url = data.ws.url ?? '';
+      const block = buildWebSocketRequestBlock(url);
+      let content = helpers.convertBlocksToVoidFile(data.meta.name, [block]);
+      if (data.docs) content += `\n${data.docs}\n`;
+      return content;
+    }
+
     const blocks: any[] = [];
 
-    const bodyMode = data.http.body;
+    const http = data.http!;
+    const bodyMode = http.body;
     const body = data.body ?? {};
     const isGraphQL = bodyMode === 'graphql' && !!body.graphql?.query;
-    const url = convertColonPathParams(stripQueryString(data.http.url ?? ''));
+    const url = convertColonPathParams(stripQueryString(http.url ?? ''));
 
     // 1. Request block (method + url) — skipped for GraphQL, same as postman-import
     if (!isGraphQL) {
       blocks.push({
         type: 'request',
         content: [
-          helpers.createMethodNode((data.http.method || 'get').toUpperCase()),
+          helpers.createMethodNode((http.method || 'get').toUpperCase()),
           helpers.createUrlNode(url),
         ],
       });
     }
 
     // 2. Auth
-    const authBlock = buildAuthBlock(data.auth, data.http.auth);
+    const authBlock = buildAuthBlock(data.auth, http.auth);
     if (authBlock) blocks.push(authBlock);
 
     // 3. Headers
@@ -395,22 +443,31 @@ export const convertBruRequestToVoidenSchema = async (data: BruJson): Promise<st
     return helpers.convertBlocksToVoidFile(data.meta.name, blocks);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to convert "${data.meta?.name ?? 'request'}" (${data.http?.method} ${data.http?.url}): ${detail}`);
+    const locator = data.http ? `${data.http.method} ${data.http.url}` : data.grpc?.url ?? data.ws?.url ?? 'unknown target';
+    throw new Error(`Failed to convert "${data.meta?.name ?? 'request'}" (${locator}): ${detail}`);
   }
 };
 
 /**
- * Parse raw .bru text via @usebruno/lang and validate it's a single HTTP
- * request (not a graphql/grpc/ws request, and not a collection-level file
- * like bruno.json/folder.bru, which never produce both `meta` and `http`).
+ * Parse raw .bru text via @usebruno/lang and validate it's a single request
+ * of a supported type (http, graphql — which reuses the http block, grpc,
+ * or ws), not a collection-level file like bruno.json/folder.bru (which
+ * never produce a `meta` block at all).
  */
 export function parseBruContent(raw: string): BruJson {
   const data = bruToJsonV2(raw) as BruJson;
-  if (!data?.meta || !data?.http) {
-    throw new Error('Unrecognized Bruno request format (expected a .bru file with a meta{} block and an HTTP method block)');
+  if (!data?.meta) {
+    throw new Error('Unrecognized Bruno request format (expected a .bru file with a meta{} block)');
   }
-  if (data.meta.type !== 'http') {
-    throw new Error(`Unsupported Bruno request type "${data.meta.type}" — only type: http requests are supported today`);
+  const type = data.meta.type;
+  if (type === 'http' || type === 'graphql') {
+    if (!data.http) throw new Error(`meta.type is "${type}" but no HTTP method block was found`);
+  } else if (type === 'grpc') {
+    if (!data.grpc) throw new Error('meta.type is "grpc" but no grpc{} block was found');
+  } else if (type === 'ws') {
+    if (!data.ws) throw new Error('meta.type is "ws" but no ws{} block was found');
+  } else {
+    throw new Error(`Unsupported Bruno request type "${type}" — only http, graphql, grpc, and ws requests are supported today`);
   }
   return data;
 }
@@ -437,4 +494,94 @@ export const importBruRequest = async (
   await (window as any).electron?.files?.write(result.path, fileContent);
 
   return { success: true, path: result.path };
+};
+
+// ---------------------------------------------------------------------------
+// Environment files (environments/<name>.bru)
+// ---------------------------------------------------------------------------
+
+interface BruEnvVariable {
+  name: string;
+  value: string;
+  enabled: boolean;
+  secret: boolean;
+}
+
+/**
+ * Parse a Bruno environment file via @usebruno/lang's bruToEnvJsonV2 (a
+ * different function from bruToJsonV2 — request files and environment files
+ * use different grammars). Unlike a request file, there's no name field in
+ * the content itself; the environment's name is its filename, so callers
+ * must supply it separately.
+ */
+export function parseBruEnvironment(raw: string): BruEnvVariable[] {
+  const result = bruToEnvJsonV2(raw) as { variables?: BruEnvVariable[] };
+  if (!Array.isArray(result?.variables)) {
+    throw new Error('Unrecognized Bruno environment format (expected vars{}/vars:secret[] blocks)');
+  }
+  return result.variables;
+}
+
+/**
+ * Import a Bruno environment into Voiden's env-*.yaml tree, under the
+ * "default" profile — see the base voiden skill's "Environment Variables"
+ * section for the full YAML shape. Non-secret vars go to env-public.yaml,
+ * secret ones (Bruno's vars:secret, which carry no value — just a name to
+ * fill in locally) go to env-private.yaml, mirroring Voiden's own
+ * public/private split. Disabled vars are skipped, not imported disabled —
+ * Voiden's env YAML has no per-variable enabled/disabled flag to preserve
+ * that state in.
+ *
+ * Merges into the existing file rather than overwriting it: reads the
+ * current YAML (if any), adds/replaces only the node named after this
+ * environment, and writes the merged tree back — so importing one Bruno
+ * environment never destroys others already in the project.
+ */
+export const importBruEnvironment = async (
+  content: string,
+  envName: string,
+  activeProject: string,
+): Promise<{ success: true; profile: string }> => {
+  if (!activeProject) {
+    throw new Error('No active project found');
+  }
+
+  const variables = parseBruEnvironment(content);
+  // Dots split the env tree into parent/child nodes (see base skill) — a
+  // Bruno environment name is always a single flat node, so any dot in it
+  // would be misread as a path separator; convert to hyphens like the app
+  // itself does when a dot is typed into a name.
+  const nodeName = envName.replace(/\./g, '-') || 'default';
+
+  const publicVars: Record<string, string> = {};
+  const privateVars: Record<string, string> = {};
+  for (const v of variables) {
+    if (v.enabled === false) continue;
+    (v.secret ? privateVars : publicVars)[v.name] = v.value ?? '';
+  }
+
+  const electron = (window as any).electron;
+  const voidenDirExists = await electron?.files?.getDirectoryExist(activeProject, '.voiden');
+  if (!voidenDirExists) {
+    await electron?.files?.createDirectory(activeProject, '.voiden');
+  }
+
+  const writeMerged = async (fileName: string, vars: Record<string, string>) => {
+    if (Object.keys(vars).length === 0) return;
+    const filePath = `${activeProject}/.voiden/${fileName}`;
+    let tree: Record<string, any> = {};
+    try {
+      const existing = await electron?.files?.read(filePath);
+      if (existing) tree = (yaml.load(existing) as Record<string, any>) ?? {};
+    } catch {
+      // File doesn't exist yet — start with an empty tree
+    }
+    tree[nodeName] = { ...(tree[nodeName] ?? {}), variables: { ...(tree[nodeName]?.variables ?? {}), ...vars } };
+    await electron?.files?.write(filePath, yaml.dump(tree));
+  };
+
+  await writeMerged('env-public.yaml', publicVars);
+  await writeMerged('env-private.yaml', privateVars);
+
+  return { success: true, profile: 'default' };
 };

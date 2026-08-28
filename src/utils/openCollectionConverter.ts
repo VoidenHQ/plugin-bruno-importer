@@ -1,13 +1,18 @@
 import yaml from 'js-yaml';
-import type { OpenCollection, OcItem, OcHttpRequest, OcAuth, OcAssertion, OcScript, OcVariable, OcMultipartFormEntry } from './opencollectionTypes';
-import { isOcFolder, isOcHttpRequest, looksLikeOpenCollection } from './opencollectionTypes';
+import type { OpenCollection, OcItem, OcHttpRequest, OcGraphQLRequest, OcGrpcRequest, OcWebSocketRequest, OcAuth, OcAssertion, OcScript, OcVariable, OcMultipartFormEntry } from './opencollectionTypes';
+import { isOcFolder, isOcHttpRequest, isOcGraphQLRequest, isOcGrpcRequest, isOcWebSocketRequest, looksLikeOpenCollection } from './opencollectionTypes';
 import { getVoidenApiHelpers } from './useVoidenApiHelpers';
 import {
   makeUid,
   buildAuthBlockFromRows,
+  buildOAuth1Block,
+  buildOAuth2Block,
   buildAssertionsTableFromRows,
   buildScriptBlock,
   buildMultipartRow,
+  buildWebSocketRequestBlock,
+  buildGrpcRequestBlock,
+  normalizeGrpcCallType,
   ASSERT_OP_MAP,
   ASSERT_NO_EXPECTED,
   type NormalizedAssertionRow,
@@ -43,14 +48,71 @@ function stripQueryString(url: string): string {
  * Convert OpenCollection's `auth` field into a Voiden `auth` block.
  * `'inherit'` maps straight to Voiden's own `inherit` authType (it fills the
  * same slot per the base skill's singleton-auth rule), `'none'`/undefined
- * produce no block at all, and oauth1/oauth2 are skipped rather than
- * guessed at — same reasoning as the classic `.bru` path.
+ * produce no block at all. `wsse` is skipped — Voiden's auth block has no
+ * wsse slot.
  */
 function buildAuthFromOc(auth: OcAuth | undefined): any | null {
   if (!auth || auth === 'none') return null;
   if (auth === 'inherit') {
     return { type: 'auth', attrs: { uid: makeUid(), authType: 'inherit' }, content: [] };
   }
+
+  if (auth.type === 'oauth1') {
+    return buildOAuth1Block({
+      consumerKey: auth.consumerKey,
+      consumerSecret: auth.consumerSecret,
+      accessToken: auth.accessToken,
+      accessTokenSecret: auth.accessTokenSecret,
+      signatureMethod: auth.signatureMethod,
+    });
+  }
+  if (auth.type === 'oauth2') {
+    const creds = 'credentials' in auth ? auth.credentials : undefined;
+    if (auth.flow === 'resource_owner_password_credentials') {
+      return buildOAuth2Block({
+        grantType: 'password',
+        tokenUrl: auth.accessTokenUrl,
+        clientId: creds?.clientId,
+        clientSecret: (creds as OcOAuth2CredentialsWithSecret | undefined)?.clientSecret,
+        username: auth.resourceOwner?.username,
+        password: auth.resourceOwner?.password,
+        scope: auth.scope,
+      });
+    }
+    if (auth.flow === 'authorization_code') {
+      return buildOAuth2Block({
+        grantType: 'authorization_code',
+        authUrl: auth.authorizationUrl,
+        tokenUrl: auth.accessTokenUrl,
+        clientId: creds?.clientId,
+        clientSecret: (creds as OcOAuth2CredentialsWithSecret | undefined)?.clientSecret,
+        scope: auth.scope,
+        callbackUrl: auth.callbackUrl,
+        state: auth.state,
+      });
+    }
+    if (auth.flow === 'client_credentials') {
+      return buildOAuth2Block({
+        grantType: 'client_credentials',
+        tokenUrl: auth.accessTokenUrl,
+        clientId: creds?.clientId,
+        clientSecret: (creds as OcOAuth2CredentialsWithSecret | undefined)?.clientSecret,
+        scope: auth.scope,
+      });
+    }
+    if (auth.flow === 'implicit') {
+      return buildOAuth2Block({
+        grantType: 'implicit',
+        authUrl: auth.authorizationUrl,
+        clientId: auth.credentials?.clientId,
+        scope: auth.scope,
+        callbackUrl: auth.callbackUrl,
+        state: auth.state,
+      });
+    }
+    return null;
+  }
+
   const rows: [string, string][] = [];
   switch (auth.type) {
     case 'basic':
@@ -82,10 +144,12 @@ function buildAuthFromOc(auth: OcAuth | undefined): any | null {
       if (auth.domain) rows.push(['domain', auth.domain]);
       return buildAuthBlockFromRows('ntlm', rows);
     default:
-      // wsse, oauth1, oauth2 — skip rather than guess at a shape
+      // wsse or anything else unrecognized — skip rather than guess at a shape
       return null;
   }
 }
+// client_credentials/authorization_code flows carry clientSecret; implicit doesn't.
+type OcOAuth2CredentialsWithSecret = { clientId?: string; clientSecret?: string };
 
 // OpenCollection's assertion `expression` isn't confirmed (by an actual
 // populated example) to always carry a "res."-style prefix the way the
@@ -129,6 +193,11 @@ async function buildMultipartTable(entries: OcMultipartFormEntry[], helpers: Ret
     return { type: 'multipart-table', attrs: { uid: makeUid() }, content: [{ type: 'table', content: rows }] };
   }
   return helpers.createMultipartTableNode(active.map((f) => [f.name, String(f.value ?? '')] as [string, string]));
+}
+
+function detectGraphqlOperationType(query: string): 'query' | 'mutation' | 'subscription' {
+  const match = query.match(/\b(query|mutation|subscription)\b/);
+  return (match?.[1] as 'query' | 'mutation' | 'subscription') || 'query';
 }
 
 /**
@@ -216,6 +285,111 @@ export const convertOcHttpRequestToVoidenSchema = async (item: OcHttpRequest): P
   }
 };
 
+/**
+ * Convert an OpenCollection `graphql`-type item — same gqlquery/gqlvariables
+ * container shape as the classic .bru path's GraphQL handling. The request
+ * block is omitted; the endpoint lives in gqlurl instead.
+ */
+export const convertOcGraphQLRequestToVoidenSchema = async (item: OcGraphQLRequest): Promise<string> => {
+  const name = item.info?.name || 'Bruno Request';
+  try {
+    const helpers = getVoidenApiHelpers();
+    const blocks: any[] = [];
+    const gql = item.graphql;
+    const url = convertColonPathParams(stripQueryString(gql.url ?? ''));
+
+    const authBlock = buildAuthFromOc(gql.auth);
+    if (authBlock) blocks.push(authBlock);
+
+    const activeHeaders = (gql.headers ?? []).filter((h) => h.disabled !== true);
+    if (activeHeaders.length > 0) {
+      blocks.push(helpers.createHeadersTableNode(activeHeaders.map((h) => [h.name, h.value] as [string, string])));
+    }
+
+    if (gql.body?.query) {
+      const query = gql.body.query.replace(/\r\n/g, '\n');
+      blocks.push({
+        type: 'gqlquery',
+        attrs: { uid: makeUid() },
+        content: [
+          { type: 'gqlurl', attrs: { uid: makeUid() }, content: [{ type: 'text', text: url }] },
+          {
+            type: 'gqlbody',
+            attrs: {
+              uid: makeUid(),
+              body: query,
+              operationType: detectGraphqlOperationType(query),
+              schemaUrl: null,
+              schemaFileName: null,
+              schemaFilePath: null,
+            },
+          },
+        ],
+      });
+      if (gql.body.variables) {
+        blocks.push({ type: 'gqlvariables', attrs: { uid: makeUid(), body: gql.body.variables.replace(/\r\n/g, '\n') } });
+      }
+    }
+
+    const assertRows = (item.runtime?.assertions ?? []).map(normalizeOcAssertion);
+    const assertionsBlock = buildAssertionsTableFromRows(assertRows);
+    if (assertionsBlock) blocks.push(assertionsBlock);
+
+    const { pre, post } = buildScriptsFromOc(item.runtime?.scripts, item.runtime?.variables);
+    if (pre) blocks.push(pre);
+    if (post) blocks.push(post);
+
+    let content = helpers.convertBlocksToVoidFile(name, blocks);
+    if (item.docs) content += `\n${item.docs}\n`;
+    return content;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to convert "${name}": ${detail}`);
+  }
+};
+
+/**
+ * Convert an OpenCollection `grpc`-type item into a socket-request block.
+ * Only what the app can actually use is carried over — url, proto file
+ * path, and streaming type. `metadata` and a stored request `message` have
+ * no Voiden field to land in (see buildGrpcRequestBlock in
+ * blockBuilders.ts) and are silently omitted, not guessed at.
+ */
+export const convertOcGrpcRequestToVoidenSchema = async (item: OcGrpcRequest): Promise<string> => {
+  const name = item.info?.name || 'Bruno Request';
+  try {
+    const helpers = getVoidenApiHelpers();
+    const grpc = item.grpc;
+    const block = buildGrpcRequestBlock(grpc.url ?? '', grpc.protoFilePath, grpc.method, normalizeGrpcCallType(grpc.methodType));
+    let content = helpers.convertBlocksToVoidFile(name, [block]);
+    if (item.docs) content += `\n${item.docs}\n`;
+    return content;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to convert "${name}": ${detail}`);
+  }
+};
+
+/**
+ * Convert an OpenCollection `websocket`-type item into a socket-request
+ * block (smethod + surl only). A stored `message` payload has no Voiden
+ * field — `messages-node` is a live, UI-managed connection viewer, not a
+ * place to pre-author a message to send (see buildWebSocketRequestBlock).
+ */
+export const convertOcWebSocketRequestToVoidenSchema = async (item: OcWebSocketRequest): Promise<string> => {
+  const name = item.info?.name || 'Bruno Request';
+  try {
+    const helpers = getVoidenApiHelpers();
+    const block = buildWebSocketRequestBlock(item.websocket.url ?? '');
+    let content = helpers.convertBlocksToVoidFile(name, [block]);
+    if (item.docs) content += `\n${item.docs}\n`;
+    return content;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to convert "${name}": ${detail}`);
+  }
+};
+
 export function parseOpenCollection(raw: string): OpenCollection {
   let parsed: any;
   try {
@@ -229,22 +403,41 @@ export function parseOpenCollection(raw: string): OpenCollection {
   return parsed as OpenCollection;
 }
 
+/** Dispatches to the right converter based on the item's actual type, or null for unsupported item types. */
+function convertOcItem(item: OcItem): Promise<string> | null {
+  if (isOcHttpRequest(item)) return convertOcHttpRequestToVoidenSchema(item);
+  if (isOcGraphQLRequest(item)) return convertOcGraphQLRequestToVoidenSchema(item);
+  if (isOcGrpcRequest(item)) return convertOcGrpcRequestToVoidenSchema(item);
+  if (isOcWebSocketRequest(item)) return convertOcWebSocketRequestToVoidenSchema(item);
+  return null; // app/script items — out of scope
+}
+
+function isConvertibleRequest(item: OcItem): boolean {
+  return isOcHttpRequest(item) || isOcGraphQLRequest(item) || isOcGrpcRequest(item) || isOcWebSocketRequest(item);
+}
+
 function countOcRequests(items: OcItem[]): number {
   let count = 0;
   for (const item of items) {
     if (isOcFolder(item)) count += countOcRequests(item.items ?? []);
-    else if (isOcHttpRequest(item)) count += 1;
-    // graphql/grpc/websocket/app/script items are skipped, not counted
+    else if (isConvertibleRequest(item)) count += 1;
+    // standalone app/script items are skipped, not counted
   }
   return count;
 }
 
-async function createSingleFile(item: OcHttpRequest, currentPath: string, fileName: string) {
-  const content = await convertOcHttpRequestToVoidenSchema(item);
+async function createSingleFile(item: OcItem, currentPath: string, fileName: string) {
+  const convertPromise = convertOcItem(item);
+  if (!convertPromise) return;
+  const content = await convertPromise;
   const result = await (window as any).electron?.files?.createVoid(currentPath, fileName);
   if (result?.path) {
     await (window as any).electron?.files?.write(result.path, content);
   }
+}
+
+function getItemName(item: OcItem): string {
+  return (item as { info?: { name?: string } }).info?.name || 'Bruno Request';
 }
 
 async function walkOcItems(
@@ -263,8 +456,8 @@ async function walkOcItems(
       const actualFolderName = await (window as any).electron?.files?.createDirectory(currentPath, folderName);
       const folderPath = `${currentPath}/${actualFolderName}`;
       await walkOcItems(item.items ?? [], folderPath, onProgress, progressState, onError, signal);
-    } else if (isOcHttpRequest(item)) {
-      const name = item.info?.name || 'Bruno Request';
+    } else if (isConvertibleRequest(item)) {
+      const name = getItemName(item);
       try {
         await createSingleFile(item, currentPath, sanitizeName(name));
       } catch (error) {
@@ -276,8 +469,8 @@ async function walkOcItems(
       progressState.current += 1;
       onProgress?.(progressState.current, progressState.total);
     }
-    // else: unsupported item type (graphql/grpc/websocket/app/script) — skipped silently,
-    // matching the "skip rather than guess" policy documented in skill.md
+    // else: standalone app/script item — skipped silently, matching the
+    // "skip rather than guess" policy documented in skill.md
 
     await new Promise((resolve) => setTimeout(resolve, 20));
   }

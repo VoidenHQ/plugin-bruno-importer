@@ -1,13 +1,13 @@
 {
   "id": "bruno-importer",
   "name": "Bruno Collection Importer",
-  "description": "Import a Bruno (usebruno.com) .bru request file, or a whole OpenCollection YAML/JSON export, into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
-  "version": "1.1.0",
+  "description": "Import a Bruno (usebruno.com) .bru request/environment file, or a whole OpenCollection YAML/JSON export, into Voiden — HTTP, GraphQL, gRPC, and WebSocket requests, OAuth1/OAuth2 auth, and environment variables.",
+  "version": "1.2.0",
   "voidenVersion": ">=2.0.0",
   "author": "Phurpa Tsering",
   "type": "community",
   "priority": 30,
-  "readme": "Import a Bruno .bru request file, or a whole OpenCollection YAML/JSON export, into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",
+  "readme": "Import a Bruno .bru request/environment file, or a whole OpenCollection YAML/JSON export, into Voiden — HTTP, GraphQL, gRPC, and WebSocket requests, OAuth1/OAuth2 auth, and environment variables.",
   "mainProcess": false,
   "permissions": [],
   "capabilities": {
@@ -17,8 +17,8 @@
           "id": "bruno-importer-btn",
           "location": "sidebar-left",
           "icon": "Download",
-          "tooltip": "Import Bruno Request/Collection",
-          "description": "Opens file picker to select and import a Bruno .bru request file or an OpenCollection YAML/JSON export"
+          "tooltip": "Import Bruno Request/Collection/Environment",
+          "description": "Opens file picker to select and import a Bruno .bru request/environment file or an OpenCollection YAML/JSON export"
         }
       ],
       "description": "Adds import button to left sidebar for easy request import"
@@ -46,6 +46,16 @@
           "extension": "simple-assertions",
           "reason": "Renders the assertions-table block generated from a Bruno request's assert{} block",
           "required": false
+        },
+        {
+          "extension": "voiden-sockets-grpcs",
+          "reason": "Renders the socket-request/proto blocks generated from a Bruno gRPC or WebSocket request",
+          "required": false
+        },
+        {
+          "extension": "voiden-advanced-auth",
+          "reason": "Renders the auth block generated for OAuth1/OAuth2",
+          "required": false
         }
       ],
       "description": "Depends on voiden-rest-api extension for REST block generation"
@@ -62,8 +72,11 @@
     "Import form-urlencoded bodies as url-table blocks",
     "Import multipart form bodies as multipart-table blocks, with file fields resolved as fileLink attachments when the file still exists at its original path",
     "Import a raw file body as a restFile placeholder block",
-    "Convert a GraphQL body into gqlquery/gqlvariables blocks",
-    "Convert auth (basic/bearer/apikey/digest/awsv4/ntlm) into a native auth block",
+    "Convert a GraphQL body/request into gqlquery/gqlvariables blocks (both .bru's graphql-typed requests and OpenCollection's graphql item type)",
+    "Convert a gRPC request into a socket-request block wired to its .proto file, method, and streaming type (unary/client/server/bidirectional) — request metadata and message body have no Voiden target and are not carried over",
+    "Convert a WebSocket request into a socket-request block (url + protocol) — a pre-authored message to send has no Voiden target and is not carried over",
+    "Convert auth (basic/bearer/apikey/digest/awsv4/ntlm/oauth1/oauth2 — all 4 oauth2 grant types) into a native auth block",
+    "Import a Bruno environment file (environments/<name>.bru) into Voiden's env-public.yaml/env-private.yaml tree — secret vars go to the private file, merged with any existing environments rather than overwriting them",
     "Convert a well-formed assert{} block into a live assertions-table block; entries using an unrecognized operator are imported disabled with the original expression preserved",
     "Import pre-request/post-response scripts and vars as commented-out pre_script/post_script blocks for manual review",
     "Sanitize file names for filesystem compatibility",

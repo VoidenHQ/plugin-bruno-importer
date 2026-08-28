@@ -1,11 +1,16 @@
 ## Extension: Bruno Collection Importer
 
-Bruno exports come in **two structurally different shapes**, and this extension's button handles each differently:
+Bruno exports come in **three structurally different shapes**, and this extension's button handles each differently:
 
-1. **Classic `.bru` files** — Bruno's native on-disk format: `bruno.json` plus a folder tree of individual `.bru` request files, one request per file. Opening one `.bru` file and clicking **Import into Voiden** converts it to exactly one `.void` file.
-2. **OpenCollection YAML/JSON export** — the output of Bruno 3.0+'s **Export Collection** button (this is what most users actually reach for today, not a manual `.bru` folder copy). It's a *whole collection* — folders and requests together — serialized as **one YAML or JSON file**, structurally closer to a Postman/Insomnia export than to Bruno's own per-file layout. Opening this file and clicking **Import into Voiden** walks the whole tree and produces many `.void` files + folders in one go. Detect it by a top-level `opencollection: <version>` key (e.g. `opencollection: 1.0.0`) — a plain `.bru` file never has one.
+1. **Classic `.bru` request files** — Bruno's native on-disk format: `bruno.json` plus a folder tree of individual `.bru` files, one request per file. Covers `http`, `graphql`, `grpc`, and `ws` typed requests (`meta.type`). Opening one and clicking **Import into Voiden** converts it to exactly one `.void` file.
+2. **Bruno environment files** (`environments/<name>.bru`) — no `meta{}` block, just `vars{}`/`vars:secret[]`. Opening one and clicking **Import into Voiden** merges its variables into Voiden's own `env-public.yaml`/`env-private.yaml` tree.
+3. **OpenCollection YAML/JSON export** — the output of Bruno 3.0+'s **Export Collection** button (this is what most users actually reach for today, not a manual `.bru` folder copy). It's a *whole collection* — folders and requests together — serialized as **one YAML or JSON file**, structurally closer to a Postman/Insomnia export than to Bruno's own per-file layout. Opening this file and clicking **Import into Voiden** walks the whole tree and produces many `.void` files + folders in one go. Detect it by a top-level `opencollection: <version>` key (e.g. `opencollection: 1.0.0`) — a plain `.bru` file never has one.
 
-**This skill is not about the button's output** — it teaches an agent how to **generate `.void` files directly from either raw format**, e.g. when asked to "convert this Bruno collection/export into Voiden requests." Read `voiden-rest-api`'s skill alongside this one for full block syntax, `voiden-advanced-auth`'s skill for the `auth` block, `voiden-graphql`'s skill for `gqlquery`/`gqlvariables`, and `simple-assertions`'s skill for `assertions-table`.
+**This skill is not about the button's output** — it teaches an agent how to **generate `.void` files directly from any of these raw formats**, e.g. when asked to "convert this Bruno collection/export into Voiden requests." Read `voiden-rest-api`'s skill alongside this one for full block syntax, `voiden-advanced-auth`'s skill for the `auth` block, `voiden-graphql`'s skill for `gqlquery`/`gqlvariables`, `voiden-sockets-grpcs`'s skill for `socket-request`/`proto`, and `simple-assertions`'s skill for `assertions-table`.
+
+### What has no Voiden target — don't force one
+
+Bruno's gRPC and WebSocket requests carry a pre-authored request payload (`.bru`'s `body:grpc{}`/`body:ws{}`, OpenCollection's `grpc.message`/`websocket.message`) and gRPC carries custom metadata (`.bru`'s `metadata{}`, OpenCollection's `grpc.metadata`). **Neither has anywhere to go in a `.void` file** — Voiden's `socket-request` block for these protocols only ever holds connection info (`smethod`/`surl`/`proto`), and its `messages-node`/`grpc-messages-node` are live, UI-populated records of an actual run, not fields you fill in ahead of time (see `voiden-sockets-grpcs`'s skill). Import the connection details (url, proto file, streaming type) and leave the payload for the person to send interactively from the app — don't stuff it into a script or comment pretending it's wired up.
 
 ### Default generation strategy: one file per resource, not per request
 
@@ -101,12 +106,17 @@ Keep going with the same pattern for `Update Article` (PUT/PATCH) and `Delete Ar
 
 ### Mapping a `.bru` request to Voiden blocks
 
-Parse each `.bru` file's blocks directly (or via `@usebruno/lang`'s `bruToJsonV2` if running in a JS context) — only `meta.type: "http"` files are in scope; `graphql`/`grpc`/`ws`-typed requests aren't covered here:
+Parse each `.bru` file's blocks directly (or via `@usebruno/lang`'s `bruToJsonV2` if running in a JS context). Field names for the rarer grpc/ws/oauth1/oauth2 shapes below were verified directly against `@usebruno/lang`'s own grammar/serializer source (`bruToJson.js`/`jsonToBru.js`) — not sample fixtures, since real-world examples of these are scarce.
+
+**`http`/`graphql`-typed requests** (`meta.type: "http"` or `"graphql"` — a graphql request still uses an http-style method block, just with `body: graphql`):
 
 | Bruno block | Voiden block | Notes |
 |---|---|---|
 | `get{}`/`post{}`/`put{}`/... block's `url` | `request` (method + url) | The block name itself is the method. Convert `:id` segments to `{id}` and strip the `?query` portion (query params come from `params:query` instead). Skip this block entirely for a `body:graphql` request — the endpoint lives in `gqlurl` instead. |
-| `auth:basic{}` / `auth:bearer{}` / `auth:apikey{}` / `auth:digest{}` / `auth:awsv4{}` / `auth:ntlm{}` | `auth` | Each block's fields map directly (e.g. `auth:bearer{ token }` → `auth` block's `token` row). `auth:oauth2{}` and `auth:wsse{}` have no safe mapping — oauth2's shape varies by grant type and rarely carries a resolved token, and Voiden's auth block has no wsse slot; leave these to convert by hand. |
+| `auth:basic{}` / `auth:bearer{}` / `auth:apikey{}` / `auth:digest{}` / `auth:awsv4{}` / `auth:ntlm{}` | `auth` | Each block's fields map directly (e.g. `auth:bearer{ token }` → `auth` block's `token` row). |
+| `auth:oauth1{}` | `auth` (`authType: oauth1`) | Bruno's oauth1 config has more fields (`callback_url`, `verifier`, `realm`, `private_key`, ...) than Voiden's auth block documents — only `consumer_key`/`consumer_secret`/`access_token`/`token_secret`/`signature_method` carry over; the rest have nowhere to go. |
+| `auth:oauth2{}` | `auth` (`authType: oauth2`) | Grant-type discriminated (`grant_type: password\|authorization_code\|client_credentials\|implicit`) — the same 4 flows Voiden's own oauth2 documents, with near-identical field names once snake_cased (`access_token_url`→`token_url`, `authorization_url`→`auth_url`, etc.). Populate both the row table and the `oauth2Config` JSON attr — see `voiden-advanced-auth`'s skill for the exact per-flow shape. |
+| `auth:wsse{}` | *(no mapping)* | Voiden's auth block has no wsse slot — leave to convert by hand. |
 | `headers{}` (rows not prefixed `~`) | `headers-table` | A `~` prefix means disabled — carry that into `disabled: true`, don't drop the row. |
 | `params:path{}` | `path-table` | Bruno gives the definitive path-param list directly — no need to scan the URL for `:name` segments the way Postman/Insomnia require. |
 | `params:query{}` (rows not prefixed `~`) | `query-table` | |
@@ -121,14 +131,41 @@ Parse each `.bru` file's blocks directly (or via `@usebruno/lang`'s `bruToJsonV2
 | `script:pre-request{}` / `vars:pre-request{}` | `pre_script` | **Comment it out** — Bruno scripts use the `bru.*` API, Voiden scripts use `voiden.*`. Render `vars:pre-request` entries as `bru.setVar(name, value);` pseudocode inside the same commented block so nothing is silently lost. |
 | `script:post-response{}` / `vars:post-response{}` | `post_script` | Same treatment, commented out. A `vars:post-response` entry here is exactly the kind of capture worth promoting into a live `runtime-variables` row when building the multi-section file (see "Chaining sections" above). |
 
+**`grpc`-typed requests** (`meta.type: "grpc"`):
+
+| Bruno block | Voiden block | Notes |
+|---|---|---|
+| `grpc{}`'s `url` | `socket-request` > `smethod` (`GRPCS` if `grpcs://`, else `GRPC`) + `surl` | |
+| `grpc.protoPath` | `proto.filePath`/`proto.fileName` (basename) | `proto.services` stays `[]` — the app populates it once it can read the file itself. |
+| `grpc.method` (e.g. `"user.UserService/GetUser"`) | `proto.selectedService` + `proto.selectedMethod` | Split on `/` when present. |
+| `grpc.methodType` | `proto.callType` | Normalize hyphens to underscores (`server-streaming`→`server_streaming`); `bidi-streaming`→`bidirectional_streaming` specifically (Voiden spells it out in full, Bruno abbreviates). Default `unary` if absent/unrecognized. |
+| `metadata{}`, `body:grpc{}` | *(no mapping — see "What has no Voiden target" above)* | |
+
+**`ws`-typed requests** (`meta.type: "ws"`):
+
+| Bruno block | Voiden block | Notes |
+|---|---|---|
+| `ws{}`'s `url` | `socket-request` > `smethod` (`WSS` if `wss://`, else `WS`) + `surl` | |
+| `body:ws{}` | *(no mapping — see "What has no Voiden target" above)* | |
+
+### Mapping a Bruno environment file to Voiden
+
+An `environments/<name>.bru` file has no `meta{}` block — just `vars {}` (public) and/or `vars:secret [...]` (an array of *names*, no values — meant to be filled in locally). Parse with `@usebruno/lang`'s `bruToEnvJsonV2`, which returns a flat `{variables: [{name, value, enabled, secret}]}`. The environment's own name comes from its **filename**, not its content (e.g. `environments/Production.bru` → environment name `Production`).
+
+Map into the base skill's Environment Variables YAML tree, under the **default profile**: build one tree node keyed by the environment's name (replace any dot with a hyphen, same as the app's own name-typing rule), with a flat `variables: {name: value}` map — non-secret vars go into `env-public.yaml`, secret vars (empty value, meant to be filled in) into `env-private.yaml`. **Merge, don't overwrite** — read the existing YAML file first (if any) and only add/replace this one environment's node, so importing one Bruno environment doesn't wipe out others already in the project. Skip disabled (`enabled: false`) variables — Voiden's env YAML has no per-variable enabled flag to preserve that state in.
+
 ### Mapping an OpenCollection item to Voiden blocks
 
-An OpenCollection export is a tree under `items[]` — each item is either a folder (`info.type: "folder"`, itself holding a nested `items[]`) or a request. Only `info.type: "http"` request items are in scope here; `graphql`/`grpc`/`websocket` request items and standalone `app`/`script` items aren't covered (skip them, same "don't guess" policy as the `.bru` mapping's unsupported cases). Field names verified against the [OpenCollection type definitions](https://github.com/opencollection-dev/opencollection/tree/main/packages/oc-types/src) directly — the spec/schema *documentation* sites are JS-rendered viewers with no fetchable raw schema, so don't trust a scrape of those pages over this table:
+An OpenCollection export is a tree under `items[]` — each item is a folder (`info.type: "folder"`, itself holding a nested `items[]`) or a request of type `http`, `graphql`, `grpc`, or `websocket`. Standalone `app`/`script` items are out of scope (skip them, same "don't guess" policy as the `.bru` mapping's unsupported cases). Field names verified against the [OpenCollection type definitions](https://github.com/opencollection-dev/opencollection/tree/main/packages/oc-types/src) directly — the spec/schema *documentation* sites are JS-rendered viewers with no fetchable raw schema, so don't trust a scrape of those pages over this table.
+
+**`http`-type items** (also covers `graphql`-type items — same fields, just under a `graphql` key instead of `http`, and body is `{query, variables}` instead of the `OcBody` union below):
 
 | OpenCollection field | Voiden block | Notes |
 |---|---|---|
-| `http.method` + `http.url` | `request` (method + url) | Convert `:id` segments to `{id}` and strip the `?query` portion (query params come from `http.params` instead). |
-| `http.auth` | `auth` | The literal string `"inherit"` maps straight to Voiden's own `inherit` authType (same slot, per the base skill's singleton-auth rule); `"none"`/absent produces no auth block at all. Otherwise it's an object like `{type: "bearer", token}` — map each type's fields directly (`basic`/`bearer`/`apikey`/`digest`/`awsv4`/`ntlm`). `oauth1`/`oauth2`/`wsse` have no safe mapping — same reasoning as the `.bru` path (oauth's shape varies by flow and rarely carries a resolved token) — leave these to convert by hand. |
+| `http.method` + `http.url` | `request` (method + url) | Convert `:id` segments to `{id}` and strip the `?query` portion (query params come from `http.params` instead). Skipped for a `graphql`-type item — the endpoint lives in `gqlurl` instead. |
+| `http.auth` | `auth` | The literal string `"inherit"` maps straight to Voiden's own `inherit` authType (same slot, per the base skill's singleton-auth rule); `"none"`/absent produces no auth block at all. Otherwise it's an object like `{type: "bearer", token}` — map each type's fields directly (`basic`/`bearer`/`apikey`/`digest`/`awsv4`/`ntlm`/`oauth1`/`oauth2`). `wsse` has no mapping — Voiden's auth block has no wsse slot. |
+| `http.auth` where `type: "oauth1"` | `auth` (`authType: oauth1`) | Fields (`consumerKey`/`consumerSecret`/`accessToken`/`accessTokenSecret`/`signatureMethod`) map directly onto Voiden's 5 documented oauth1 fields. |
+| `http.auth` where `type: "oauth2"` | `auth` (`authType: oauth2`) | Discriminated by `flow` (`client_credentials`/`resource_owner_password_credentials`/`authorization_code`/`implicit`) — maps onto Voiden's 4 oauth2 grant types (`resource_owner_password_credentials`→Voiden's `password`). `credentials.clientId`/`clientSecret` and (for `authorization_code`/`implicit`) `authorizationUrl`/`accessTokenUrl`/`callbackUrl`/`state` carry over; populate both the row table and `oauth2Config` — see `voiden-advanced-auth`'s skill. |
 | `http.headers[]` (where `disabled` is not `true`) | `headers-table` | Row: `[name, value]`. |
 | `http.params[]` where `type: "path"` | `path-table` | OpenCollection gives the definitive path-param list directly, same as classic `.bru`'s `params:path`. |
 | `http.params[]` where `type: "query"` and `disabled` is not `true` | `query-table` | |
@@ -138,9 +175,27 @@ An OpenCollection export is a tree under `items[]` — each item is either a fol
 | `http.body` where `type: "form-urlencoded"` | `url-table` | From `body.data[]` (where `disabled` is not `true`). |
 | `http.body` where `type: "multipart-form"` | `multipart-table` | From `body.data[]`; a `type: "file"` entry's `value` path becomes a `fileLink` attachment if it still exists on disk. |
 | `http.body` where `type: "file"` | `restFile` | Placeholder only — Voiden can't embed binary content. |
+| `graphql.body.query` / `graphql.body.variables` | `gqlquery` + `gqlvariables` | Same container shape as the `.bru`/Postman mapping. |
 | `runtime.assertions[]` (`{expression, operator, value, disabled}`) | `assertions-table` | Declarative, safe to map directly like `.bru`'s `assert{}` — same operator table (`eq`→`equals`, `neq`→`not-equals`, etc.), strip a leading `res.` from `expression` for the field column. **Caveat**: unlike the `.bru` mapping (verified by actually running `bruToJsonV2` against real files), no real populated example of this field was available to confirm `expression` always carries the `res.`/`req.` prefix convention — treat this mapping as best-effort and double-check a converted assertion's field/operator against the source before trusting it blindly. |
 | `runtime.scripts[]` (`{type: "before-request"\|"after-response"\|"tests", code}`) | `pre_script` (from `before-request`) / `post_script` (from `after-response` + `tests`, concatenated) | **Comment it out** — same `bru.*` vs `voiden.*` API mismatch as the `.bru` path. |
 | `runtime.variables[]` (`{name, value, disabled}`) | folded into `pre_script`'s comment as `bru.setVar(name, value);` pseudocode | No capture-expression/scope field here (unlike `.bru`'s `vars:post-response`), so these read as static per-request overrides, not response captures — nothing to promote into `runtime-variables` automatically. |
+
+**`grpc`-type items**:
+
+| OpenCollection field | Voiden block | Notes |
+|---|---|---|
+| `grpc.url` | `socket-request` > `smethod` (`GRPCS` if `grpcs://`, else `GRPC`) + `surl` | |
+| `grpc.protoFilePath` | `proto.filePath`/`proto.fileName` (basename) | `proto.services` stays `[]` for the app to populate. |
+| `grpc.method` (e.g. `"user.UserService/GetUser"`) | `proto.selectedService` + `proto.selectedMethod` | Split on `/` when present. |
+| `grpc.methodType` (`unary`\|`client-streaming`\|`server-streaming`\|`bidi-streaming`) | `proto.callType` | Normalize hyphens to underscores; `bidi-streaming`→`bidirectional_streaming` specifically. |
+| `grpc.metadata[]`, `grpc.message` | *(no mapping — see "What has no Voiden target" above)* | |
+
+**`websocket`-type items**:
+
+| OpenCollection field | Voiden block | Notes |
+|---|---|---|
+| `websocket.url` | `socket-request` > `smethod` (`WSS` if `wss://`, else `WS`) + `surl` | |
+| `websocket.headers[]`, `websocket.message` | *(no mapping — see "What has no Voiden target" above)* | Unlike `.bru`'s ws requests, OpenCollection's websocket items do carry a `headers[]` field, but `socket-request` has no headers-table slot to put it in either way. |
 
 ### Placing a section's documentation
 

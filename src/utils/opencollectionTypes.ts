@@ -62,9 +62,29 @@ export interface OcFileBody {
 
 export type OcBody = OcRawBody | OcFormUrlEncodedBody | OcMultipartFormBody | OcFileBody;
 
-// oauth1/oauth2 are deliberately not modeled here — same reasoning as the
-// classic .bru path: too many shapes (4 oauth2 flows alone), and rarely
-// carry a resolved token worth copying. Skipped rather than guessed at.
+export interface OcAuthOAuth1 {
+  type: 'oauth1';
+  consumerKey?: string;
+  consumerSecret?: string;
+  accessToken?: string;
+  accessTokenSecret?: string;
+  signatureMethod?: 'HMAC-SHA1' | 'HMAC-SHA256' | 'HMAC-SHA512' | 'RSA-SHA1' | 'RSA-SHA256' | 'RSA-SHA512' | 'PLAINTEXT';
+}
+
+interface OcOAuth2Credentials {
+  clientId?: string;
+  clientSecret?: string;
+}
+
+// The 4 oauth2 grant-type flows, field names verified against oc-types'
+// auth-oauth2.ts — matches Voiden's own oauth2 auth block's 4 grant types
+// almost field-for-field (see blockBuilders.ts's buildOAuth2Block).
+export type OcAuthOAuth2 =
+  | { type: 'oauth2'; flow: 'client_credentials'; accessTokenUrl?: string; credentials?: OcOAuth2Credentials; scope?: string }
+  | { type: 'oauth2'; flow: 'resource_owner_password_credentials'; accessTokenUrl?: string; credentials?: OcOAuth2Credentials; resourceOwner?: { username?: string; password?: string }; scope?: string }
+  | { type: 'oauth2'; flow: 'authorization_code'; authorizationUrl?: string; accessTokenUrl?: string; callbackUrl?: string; credentials?: OcOAuth2Credentials; scope?: string; state?: string }
+  | { type: 'oauth2'; flow: 'implicit'; authorizationUrl?: string; callbackUrl?: string; credentials?: { clientId?: string }; scope?: string; state?: string };
+
 export type OcAuth =
   | 'inherit'
   | 'none'
@@ -75,7 +95,8 @@ export type OcAuth =
   | { type: 'digest'; username?: string; password?: string }
   | { type: 'ntlm'; username?: string; password?: string; domain?: string }
   | { type: 'wsse'; username?: string; password?: string }
-  | { type: 'oauth1' | 'oauth2'; [key: string]: unknown };
+  | OcAuthOAuth1
+  | OcAuthOAuth2;
 
 export interface OcScript {
   type: 'before-request' | 'after-response' | 'tests' | 'hooks' | string;
@@ -116,11 +137,73 @@ export interface OcHttpRequestRuntime {
   assertions?: OcAssertion[];
 }
 
-/** An HTTP request item — the only item type this importer converts. */
 export interface OcHttpRequest {
   info?: OcHttpRequestInfo;
   http: OcHttpRequestDetails;
   runtime?: OcHttpRequestRuntime;
+  docs?: string;
+}
+
+export interface OcGraphQLRequestInfo {
+  name?: string;
+  type: 'graphql';
+  seq?: number;
+}
+
+export interface OcGraphQLRequestDetails {
+  url?: string;
+  headers?: OcHeader[];
+  params?: OcParam[];
+  body?: { query?: string; variables?: string };
+  auth?: OcAuth;
+}
+
+export interface OcGraphQLRequest {
+  info: OcGraphQLRequestInfo;
+  graphql: OcGraphQLRequestDetails;
+  runtime?: OcHttpRequestRuntime;
+  docs?: string;
+}
+
+export interface OcGrpcRequestInfo {
+  name?: string;
+  type: 'grpc';
+  seq?: number;
+}
+
+// GrpcMethodType uses hyphens (client-streaming, server-streaming,
+// bidi-streaming) — different spelling from Voiden's own underscored
+// callType, hence normalizeGrpcCallType in blockBuilders.ts.
+export interface OcGrpcRequestDetails {
+  url?: string;
+  method?: string;
+  methodType?: 'unary' | 'client-streaming' | 'server-streaming' | 'bidi-streaming';
+  protoFilePath?: string;
+  metadata?: { name: string; value: string; disabled?: boolean }[];
+  auth?: OcAuth;
+}
+
+export interface OcGrpcRequest {
+  info: OcGrpcRequestInfo;
+  grpc: OcGrpcRequestDetails;
+  docs?: string;
+}
+
+export interface OcWebSocketRequestInfo {
+  name?: string;
+  type: 'websocket';
+  seq?: number;
+}
+
+export interface OcWebSocketRequestDetails {
+  url?: string;
+  headers?: OcHeader[];
+  auth?: OcAuth;
+}
+
+export interface OcWebSocketRequest {
+  info: OcWebSocketRequestInfo;
+  websocket: OcWebSocketRequestDetails;
   docs?: string;
 }
 
@@ -135,10 +218,10 @@ export interface OcFolder {
   items?: OcItem[];
 }
 
-// GraphQL/gRPC/WebSocket items, and the standalone `app`/`script` item
-// types, are out of scope for now — same "skip rather than guess" policy
-// as the classic .bru importer's unsupported auth/body types.
-export type OcItem = OcHttpRequest | OcFolder | { info?: { type?: string } };
+// The standalone `app`/`script` item types are out of scope — same "skip
+// rather than guess" policy as the classic .bru importer's unsupported
+// auth/body types.
+export type OcItem = OcHttpRequest | OcGraphQLRequest | OcGrpcRequest | OcWebSocketRequest | OcFolder | { info?: { type?: string } };
 
 export interface OpenCollection {
   opencollection?: string;
@@ -153,6 +236,18 @@ export function isOcFolder(item: OcItem): item is OcFolder {
 export function isOcHttpRequest(item: OcItem): item is OcHttpRequest {
   const info = (item as OcHttpRequest).info;
   return (info?.type === 'http' || info?.type === undefined) && !!(item as OcHttpRequest).http;
+}
+
+export function isOcGraphQLRequest(item: OcItem): item is OcGraphQLRequest {
+  return (item as OcGraphQLRequest).info?.type === 'graphql' && !!(item as OcGraphQLRequest).graphql;
+}
+
+export function isOcGrpcRequest(item: OcItem): item is OcGrpcRequest {
+  return (item as OcGrpcRequest).info?.type === 'grpc' && !!(item as OcGrpcRequest).grpc;
+}
+
+export function isOcWebSocketRequest(item: OcItem): item is OcWebSocketRequest {
+  return (item as OcWebSocketRequest).info?.type === 'websocket' && !!(item as OcWebSocketRequest).websocket;
 }
 
 /**
