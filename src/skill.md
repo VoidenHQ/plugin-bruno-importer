@@ -128,8 +128,8 @@ Parse each `.bru` file's blocks directly (or via `@usebruno/lang`'s `bruToJsonV2
 | `body:multipart-form{}` | `multipart-table` | A field written as `name: @file(/path)` becomes a `fileLink` attachment if it still exists on disk. |
 | `body:graphql{}` | `gqlquery` + `gqlvariables` | Same container shape as the Postman mapping — `gqlbody.body` gets the query text (detect `query`/`mutation`/`subscription` from it), a second `gqlvariables` block if variables are present. |
 | `assert{}` | `assertions-table` | **This one is safe to translate directly** — unlike scripts, `assert{}` is a declarative `res.<field>: <op> <expected>` table, not arbitrary JS. Strip the `res.` prefix for the field column; map the operator (`eq`→`equals`, `neq`→`not-equals`, `contains`→`contains`, `notContains`→`not-contains`, `isDefined`→`exists`, `isUndefined`→`not-exists`, `gt`/`gte`/`lt`/`lte`→`greater-than`/`greater-equal`/`less-than`/`less-equal`, `isEmpty`/`isNotEmpty`→`is-empty`/`not-empty`, `isTruthy`/`isFalsy`→`is-truthy`/`is-falsy`, `matches`→`matches`; see `simple-assertions`'s skill for the full Voiden operator list). An assertion on `req.*` (not `res.*`) or using an operator outside this list has no clean Voiden equivalent — still include the row, but `disabled: true` with the original Bruno expression kept in the description, rather than silently dropping it. |
-| `script:pre-request{}` / `vars:pre-request{}` | `pre_script` | **Comment it out** — Bruno scripts use the `bru.*` API, Voiden scripts use `voiden.*`. Render `vars:pre-request` entries as `bru.setVar(name, value);` pseudocode inside the same commented block so nothing is silently lost. |
-| `script:post-response{}` / `vars:post-response{}` | `post_script` | Same treatment, commented out. A `vars:post-response` entry here is exactly the kind of capture worth promoting into a live `runtime-variables` row when building the multi-section file (see "Chaining sections" above). |
+| `script:pre-request{}` / `vars:pre-request{}` | `pre_script` | **Translate when every line is a recognized safe pattern, otherwise comment out in full** — see "Translating bru.*/expect scripts" below. `vars:pre-request` entries render as `bru.setVar(name, value);` pseudocode before translation, so they get the same treatment as a real `bru.setVar` call. |
+| `script:post-response{}` / `vars:post-response{}` | `post_script` | Same policy. A `vars:post-response` entry that resolves to a live `voiden.variables.set(...)` call is already the chaining wiring "Chaining sections" above describes manually adding — when translation succeeds, that wiring is already there. |
 
 **`grpc`-typed requests** (`meta.type: "grpc"`):
 
@@ -147,6 +147,30 @@ Parse each `.bru` file's blocks directly (or via `@usebruno/lang`'s `bruToJsonV2
 |---|---|---|
 | `ws{}`'s `url` | `socket-request` > `smethod` (`WSS` if `wss://`, else `WS`) + `surl` | |
 | `body:ws{}` | *(no mapping — see "What has no Voiden target" above)* | |
+
+### Translating `bru.*`/`expect` scripts into live `voiden.*` code
+
+Bruno scripts use the `bru.*`/`req.*`/`res.*` API; Voiden scripts use `voiden.*`/`vd.*` (see `voiden-scripting`'s skill for the full reference) — not source-compatible, so a blanket "just copy the script" isn't safe. But a real, useful subset maps directly, and translating those live is worth doing — **as long as it's all-or-nothing per script**: translate the whole thing only if *every* line resolves to a recognized pattern below; if even one line doesn't, leave the *entire* script commented exactly as before. Never a half-translated, half-commented script.
+
+**Safe to translate:**
+
+| Bruno | Voiden | Notes |
+|---|---|---|
+| `bru.setVar`/`getVar` | `voiden.variables.set`/`get` | |
+| `bru.getEnvVar` | `voiden.env.get` | `bru.setEnvVar` has no clean target (`voiden.env` is read-only) — approximated onto `voiden.variables.set` rather than left unrecognized, since dropping the whole script over one setter is a worse outcome than a labeled approximation. |
+| `req.getUrl()`/`setUrl(v)`, `.getMethod()`/`setMethod(v)`, `.getBody()`/`setBody(v)` (pre-request) | `voiden.request.url`/`= v`, `.method`/`= v`, `.body`/`= v` | Method-based per Bruno's own JS reference. |
+| `req.getHeader(n)`/`setHeader(n,v)` | `voiden.request.headers[n]` / `.push(...)` | The `push` target takes a `{key,value}` object, not Bruno's `(name, value)` pair — this is an approximate shape match, not identical calling convention. |
+| `res.status`/`.getStatus()`, `.body`/`.getBody()`, `.getHeader(n)`, `.responseTime`/`.getResponseTime()` | `voiden.response.status`, `.body`, `.headers[n]`, `.time` | Both property and method forms are real Bruno syntax; both translate. |
+| `console.log(...)` | `voiden.log(...)` | |
+| `test(name, function(){ ... })` wrapper | *(dropped — assertions become flat top-level `voiden.assert` calls)* | Bruno also allows bare top-level `expect(...)` with no `test()` wrapper at all (confirmed in the RealWorld/Conduit fixture) — translated the same way either way. |
+| `expect(x).to.eql(y)` / `.equal(y)` / `.not.eql(y)` / `.not.equal(y)` | `voiden.assert(x, "==", y)` / `"==="` / `"!="` / `"!=="` | |
+| `expect(x).to.be.above/below/at.least/at.most(y)` | `voiden.assert(x, ">"/"<"/">="/"<=", y)` | Also `.greaterThan`/`.lessThan`/`.gte`/`.lte` spellings. |
+| `expect(x).to.include/contain(y)` | `voiden.assert(x, "contains", y)` | |
+| `expect(x).to.be.true/.ok` / `.to.be.false` | `voiden.assert(x, "truthy")` / `voiden.assert(x, "falsy")` | |
+
+**Never translate, always leave commented:** `expect(x).to.match(regex)` (voiden.assert's exact handling of a RegExp value for `"matches"` isn't confirmed), `.to.have.property/lengthOf/be.a(...)` or Bruno's own `jsonBody`/`jsonSchema` matchers (no `voiden.assert` equivalent), `bru.sendRequest`/`bru.runRequest`/`bru.runner.*` (no equivalent in Voiden's scripting API), any control flow, or anything else not in the table above. Also never translate a bare `res.body`/`req.getBody()` wrapped in `JSON.parse(...)` — Voiden's `voiden.response.body`/`voiden.request.body` are already parsed if JSON, so re-parsing would throw at runtime; a script doing this needs a human to resolve the mismatch, not an automatic translation that would ship broken.
+
+A `bru.*`/`req.*`/`res.*` call nested *inside* an assertion's expression (e.g. `expect(x).to.eql(bru.getVar("y"))` — a real pattern from the RealWorld/Conduit fixture) is fine — substitutions apply anywhere in an expression. But the reverse check matters too: if a captured expression still contains an untranslated call after substitution, that line — and therefore the whole script — must fall back to commented, not ship with a leftover reference inside otherwise-live code.
 
 ### Mapping a Bruno environment file to Voiden
 
@@ -177,7 +201,7 @@ An OpenCollection export is a tree under `items[]` — each item is a folder (`i
 | `http.body` where `type: "file"` | `restFile` | Placeholder only — Voiden can't embed binary content. |
 | `graphql.body.query` / `graphql.body.variables` | `gqlquery` + `gqlvariables` | Same container shape as the `.bru`/Postman mapping. |
 | `runtime.assertions[]` (`{expression, operator, value, disabled}`) | `assertions-table` | Declarative, safe to map directly like `.bru`'s `assert{}` — same operator table (`eq`→`equals`, `neq`→`not-equals`, etc.), strip a leading `res.` from `expression` for the field column. **Caveat**: unlike the `.bru` mapping (verified by actually running `bruToJsonV2` against real files), no real populated example of this field was available to confirm `expression` always carries the `res.`/`req.` prefix convention — treat this mapping as best-effort and double-check a converted assertion's field/operator against the source before trusting it blindly. |
-| `runtime.scripts[]` (`{type: "before-request"\|"after-response"\|"tests", code}`) | `pre_script` (from `before-request`) / `post_script` (from `after-response` + `tests`, concatenated) | **Comment it out** — same `bru.*` vs `voiden.*` API mismatch as the `.bru` path. |
+| `runtime.scripts[]` (`{type: "before-request"\|"after-response"\|"tests", code}`) | `pre_script` (from `before-request`) / `post_script` (from `after-response` + `tests`, concatenated) | Same translate-or-comment policy as the `.bru` path — see "Translating bru.*/expect scripts" below (OpenCollection's script code uses the identical bare `expect()`/`test()` syntax, so the same rules apply verbatim). |
 | `runtime.variables[]` (`{name, value, disabled}`) | folded into `pre_script`'s comment as `bru.setVar(name, value);` pseudocode | No capture-expression/scope field here (unlike `.bru`'s `vars:post-response`), so these read as static per-request overrides, not response captures — nothing to promote into `runtime-variables` automatically. |
 
 **`grpc`-type items**:

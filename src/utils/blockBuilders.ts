@@ -8,6 +8,8 @@
  * differently-shaped *inputs* but need identically-shaped *outputs*.
  */
 
+import { translateBruScript } from './scriptTranslator';
+
 export const makeUid = () => crypto.randomUUID();
 
 /** Build a tableCell node. `content` is the cell's paragraph content. */
@@ -195,6 +197,16 @@ export function buildScriptBlock(type: 'pre_script' | 'post_script', extraLines:
   const scriptLines = scriptText ? scriptText.split(/\r?\n/) : [];
   const allLines = [...extraLines, ...scriptLines];
   if (!allLines.some((line) => line.trim() !== '')) return null;
+
+  const raw = allLines.join('\n');
+  const { body: translated, safe } = translateBruScript(raw);
+
+  if (safe) {
+    return {
+      type,
+      attrs: { uid: makeUid(), language: 'javascript', body: translated },
+    };
+  }
 
   const header = [
     '// Imported from a Bruno script/vars block.',
