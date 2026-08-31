@@ -1,6 +1,6 @@
 {
   "name": "@voiden/plugin-bruno-importer",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "type": "module",
   "private": false,
   "description": "Import a Bruno (usebruno.com) .bru request file, or a whole OpenCollection YAML/JSON export, into Voiden — converts method/url, headers, query/path params, body, auth, scripts, and assert blocks into native .void blocks.",

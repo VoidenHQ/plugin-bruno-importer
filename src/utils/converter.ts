@@ -1,7 +1,7 @@
 import { bruToJsonV2, bruToEnvJsonV2 } from '@usebruno/lang';
 import type { BruJson, BruAuth, BruAssertion, BruVar, BruMultipartField } from './types';
 import { getVoidenApiHelpers } from './useVoidenApiHelpers';
-import { buildOAuth1Block, buildOAuth2Block, buildWebSocketRequestBlock, buildGrpcRequestBlock, normalizeGrpcCallType } from './blockBuilders';
+import { buildOAuth1Block, buildOAuth2Block, buildWebSocketRequestBlock, buildGrpcRequestBlock, normalizeGrpcCallType, buildScriptBlock } from './blockBuilders';
 
 /**
  * Sanitize file names to be filesystem-safe — identical logic to
@@ -234,36 +234,21 @@ function buildAssertionsTable(assertions: BruAssertion[] | undefined): any | nul
 
 /**
  * Bruno's script:pre-request/post-response blocks use the bru.* API, and
- * vars:pre-request/post-response are Bruno-native variable assignments —
- * neither translates safely to Voiden's voiden.* scripting API automatically
- * (same reasoning as Postman/Insomnia's script handling), so both are folded
- * into one commented block per direction for manual review. vars entries are
- * rendered as bru.setVar(...) pseudocode so a capture like
- * `captured_id: res.body.id` (vars:post-response) is easy for a human or
- * agent to spot and promote into a live `runtime-variables` block by hand —
- * see this plugin's skill.md "Combining a CRUD group" section.
+ * vars:pre-request/post-response are Bruno-native variable assignments.
+ * Renders vars as bru.setVar(...) pseudocode (so it goes through the same
+ * translation as a real bru.setVar call) and delegates to blockBuilders.ts's
+ * shared buildScriptBlock — the one place this logic lives, used by both
+ * this classic .bru path and the OpenCollection path. (This file used to
+ * have its own separate, never-updated copy of this function — a real bug
+ * caught by end-to-end testing: it kept every classic-.bru-path script
+ * fully commented even after scriptTranslator.ts shipped, since only the
+ * shared copy had been wired up.)
  */
-function buildScriptBlock(type: 'pre_script' | 'post_script', script: string | undefined, vars: BruVar[] | undefined): any | null {
-  const scriptLines = script ? script.split(/\r?\n/) : [];
+function buildScriptBlockFromVars(type: 'pre_script' | 'post_script', script: string | undefined, vars: BruVar[] | undefined): any | null {
   const varLines = (vars ?? [])
     .filter((v) => v.enabled !== false)
     .map((v) => `bru.setVar("${v.name}", ${v.value});`);
-  const allLines = [...varLines, ...scriptLines];
-  if (!allLines.some((line) => line.trim() !== '')) return null;
-
-  const header = [
-    '// Imported from a Bruno script/vars block.',
-    '// Commented out: Voiden scripts use the voiden.* API, not bru.*.',
-    '// Review and adapt this logic (see the voiden-scripting skill for',
-    '// voiden.variables.set()/get()), then uncomment.',
-    '',
-  ];
-  const commented = allLines.map((line) => (line.trim() === '' ? '' : `// ${line}`));
-
-  return {
-    type,
-    attrs: { uid: makeUid(), language: 'javascript', body: [...header, ...commented].join('\n') },
-  };
+  return buildScriptBlock(type, varLines, script);
 }
 
 /**
@@ -434,9 +419,9 @@ export const convertBruRequestToVoidenSchema = async (data: BruJson): Promise<st
     if (assertionsBlock) blocks.push(assertionsBlock);
 
     // 8. Scripts + vars — commented out for manual review (see buildScriptBlock)
-    const preScriptBlock = buildScriptBlock('pre_script', data.script?.req, data.vars?.req);
+    const preScriptBlock = buildScriptBlockFromVars('pre_script', data.script?.req, data.vars?.req);
     if (preScriptBlock) blocks.push(preScriptBlock);
-    const postScriptBlock = buildScriptBlock('post_script', data.script?.res, data.vars?.res);
+    const postScriptBlock = buildScriptBlockFromVars('post_script', data.script?.res, data.vars?.res);
     if (postScriptBlock) blocks.push(postScriptBlock);
 
     return helpers.convertBlocksToVoidFile(data.meta.name, blocks);

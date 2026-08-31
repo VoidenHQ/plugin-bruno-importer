@@ -185,7 +185,13 @@ export function translateBruScript(rawScript: string): { body: string; safe: boo
     // Anything with no remaining foreign token (bru.*, req./res. calls not
     // covered above, an unresolved test(/expect() wrapper) is already fully
     // substituted plain JS / voiden.* — safe to keep as-is.
-    if (!/\bbru\.\w|\breq\.\w|\bres\.\w|\btest\(|\bexpect\(/.test(trimmed)) { out.push(line); continue; }
+    // require(...)/import — Bruno's sandbox can require npm packages
+    // (moment, lodash, etc.); Voiden's scripting sandbox has no such
+    // mechanism (confirmed against voiden-scripting's own API reference),
+    // so a script that "translates" cleanly but still calls require(...)
+    // would ship live and throw at runtime. Treat it like an unrecognized
+    // foreign call.
+    if (!/\bbru\.\w|\breq\.\w|\bres\.\w|\btest\(|\bexpect\(|\brequire\(|\bimport\s/.test(trimmed)) { out.push(line); continue; }
 
     // Unrecognized construct — bail out for the whole script.
     return { body: rawScript, safe: false };
