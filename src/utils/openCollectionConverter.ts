@@ -44,6 +44,24 @@ function stripQueryString(url: string): string {
   return qIdx === -1 ? url : url.slice(0, qIdx);
 }
 
+// See converter.ts's identical helper for why this fallback exists: an
+// OpenCollection item can have a URL with a literal query string and an
+// empty/absent params list, in which case the query string would otherwise
+// vanish entirely — no query-table built, and stripQueryString (below) still
+// removes it from the url node. Only used when the item's own params list has
+// no query-type entries at all.
+function deriveQueryParamsFromUrl(url: string): [string, string][] {
+  const qIdx = url.indexOf('?');
+  if (qIdx === -1) return [];
+  const query = url.slice(qIdx + 1);
+  if (!query) return [];
+  try {
+    return Array.from(new URLSearchParams(query).entries());
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Convert OpenCollection's `auth` field into a Voiden `auth` block.
  * `'inherit'` maps straight to Voiden's own `inherit` authType (it fills the
@@ -238,10 +256,16 @@ export const convertOcHttpRequestToVoidenSchema = async (item: OcHttpRequest): P
       blocks.push(helpers.createPathParamsTableNode(pathParams.map((p) => [p.name, p.value] as [string, string])));
     }
 
-    // 5. Query parameters
-    const queryParams = (http.params ?? []).filter((p) => p.type === 'query' && p.disabled !== true);
+    // 5. Query parameters — prefer the item's own params list; fall back to
+    // parsing the (pre-strip) URL's own query string when that list has no
+    // query-type entries (see deriveQueryParamsFromUrl's doc comment for why
+    // that can happen).
+    const explicitQueryParams = (http.params ?? []).filter((p) => p.type === 'query' && p.disabled !== true);
+    const queryParams: [string, string][] = explicitQueryParams.length > 0
+      ? explicitQueryParams.map((p) => [p.name, p.value] as [string, string])
+      : deriveQueryParamsFromUrl(http.url ?? '');
     if (queryParams.length > 0) {
-      blocks.push(helpers.createQueryTableNode(queryParams.map((p) => [p.name, p.value] as [string, string])));
+      blocks.push(helpers.createQueryTableNode(queryParams));
     }
 
     // 6. Body

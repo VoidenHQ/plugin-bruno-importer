@@ -34,6 +34,30 @@ function stripQueryString(url: string): string {
   return qIdx === -1 ? url : url.slice(0, qIdx);
 }
 
+// Bruno's params:query block is normally the definitive source for query
+// params — Bruno's own UI keeps it in sync with the URL's query string
+// automatically. But a hand-authored or third-party-generated .bru file can
+// have a URL with a literal query string and no params:query block at all;
+// bruToJsonV2 does not synthesize params from the URL in that case, so
+// data.params comes back empty even though the query string is right there.
+// Without this fallback that's a silent double loss: no query-table gets
+// built, AND stripQueryString (below) still removes the query string from
+// the url node, so the params vanish entirely instead of ending up unparsed
+// in the url. Only used when params:query has nothing at all, so a file that
+// already has an explicit (possibly partial, by design) params:query list is
+// never second-guessed by this.
+function deriveQueryParamsFromUrl(url: string): [string, string][] {
+  const qIdx = url.indexOf('?');
+  if (qIdx === -1) return [];
+  const query = url.slice(qIdx + 1);
+  if (!query) return [];
+  try {
+    return Array.from(new URLSearchParams(query).entries());
+  } catch {
+    return [];
+  }
+}
+
 /** Build a tableCell node. `content` is the cell's paragraph content. */
 function makeTableCell(content: any[]) {
   return {
@@ -354,10 +378,15 @@ export const convertBruRequestToVoidenSchema = async (data: BruJson): Promise<st
       blocks.push(helpers.createPathParamsTableNode(pathParams.map((p) => [p.name, p.value] as [string, string])));
     }
 
-    // 5. Query parameters
-    const queryParams = (data.params ?? []).filter((p) => p.type === 'query' && p.enabled !== false);
+    // 5. Query parameters — prefer the explicit params:query list; fall back to
+    // parsing the (pre-strip) URL's own query string when that list is empty
+    // (see deriveQueryParamsFromUrl's doc comment for why that happens).
+    const explicitQueryParams = (data.params ?? []).filter((p) => p.type === 'query' && p.enabled !== false);
+    const queryParams: [string, string][] = explicitQueryParams.length > 0
+      ? explicitQueryParams.map((p) => [p.name, p.value] as [string, string])
+      : deriveQueryParamsFromUrl(http.url ?? '');
     if (queryParams.length > 0) {
-      blocks.push(helpers.createQueryTableNode(queryParams.map((p) => [p.name, p.value] as [string, string])));
+      blocks.push(helpers.createQueryTableNode(queryParams));
     }
 
     // 6. Body

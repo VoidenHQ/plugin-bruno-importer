@@ -1,11 +1,12 @@
 [
   {
-    "version": "1.5.0",
+    "version": "1.0.0",
     "date": "2026-09-02",
     "changes": {
       "Added": [
-        "First published release — Bruno (usebruno.com) collection importer for Voiden",
+        "Initial release — Bruno (usebruno.com) collection importer for Voiden",
         "Classic .bru request files: http, graphql, grpc, and ws typed requests, converted to method/url, headers, query/path params, body (JSON/XML/text/form-urlencoded/multipart/raw file), and auth blocks",
+        "Query parameters are read from Bruno's params:query list when present, and parsed directly from the URL's own query string as a fallback when a request has one but no explicit params:query block — a valid shape for hand-authored or third-party-generated .bru/OpenCollection files",
         "Bruno environment files (environments/<name>.bru) imported as a named Voiden environment via the official electron.env.extendEnvs API, merged with existing environments rather than overwriting them",
         "GraphQL requests (.bru's graphql type or OpenCollection's graphql item) converted to gqlquery/gqlvariables blocks",
         "gRPC requests converted to a socket-request block wired to the .proto file, method, and streaming type (unary/client/server/bidirectional)",

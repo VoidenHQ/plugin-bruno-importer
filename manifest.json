@@ -2,7 +2,7 @@
   "id": "bruno-importer",
   "name": "Bruno Collection Importer",
   "description": "Import a Bruno (usebruno.com) .bru request/environment file, or a whole OpenCollection YAML/JSON export, into Voiden — HTTP, GraphQL, gRPC, and WebSocket requests, OAuth1/OAuth2 auth, and environment variables.",
-  "version": "1.5.0",
+  "version": "1.0.0",
   "voidenVersion": ">=2.0.0",
   "author": "Voiden Team",
   "priority": 30,
