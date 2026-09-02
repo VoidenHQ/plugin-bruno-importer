@@ -1,0 +1,26 @@
+[
+  {
+    "version": "1.5.0",
+    "date": "2026-09-02",
+    "changes": {
+      "Added": [
+        "First published release — Bruno (usebruno.com) collection importer for Voiden",
+        "Classic .bru request files: http, graphql, grpc, and ws typed requests, converted to method/url, headers, query/path params, body (JSON/XML/text/form-urlencoded/multipart/raw file), and auth blocks",
+        "Bruno environment files (environments/<name>.bru) imported as a named Voiden environment via the official electron.env.extendEnvs API, merged with existing environments rather than overwriting them",
+        "GraphQL requests (.bru's graphql type or OpenCollection's graphql item) converted to gqlquery/gqlvariables blocks",
+        "gRPC requests converted to a socket-request block wired to the .proto file, method, and streaming type (unary/client/server/bidirectional)",
+        "WebSocket requests converted to a socket-request block (url + protocol)",
+        "Full auth support: basic, bearer, apikey, digest, awsv4, ntlm, oauth1, and oauth2 (all 4 grant types), converted to a native auth block",
+        "assert{} blocks converted to a live assertions-table block; entries using an unrecognized operator are imported disabled with the original expression preserved",
+        "Whole OpenCollection YAML/JSON exports (Bruno 3.0+'s Export Collection output) — walks the full folder/request tree, producing one .void file per request",
+        "Standalone requests from Bruno's directory-based OpenCollection layout — a request file with no opencollection: marker of its own, detected by its info/http (or graphql/grpc/websocket) shape and converted through the same per-item converter the whole-collection export uses",
+        "Pre-request/post-response scripts and vars translated into live pre_script/post_script blocks when every line matches a recognized safe bru.*/req.*/res.*/expect() pattern — covers eql/equal/above/below/at.least/at.most/within/closeTo/include/true/false/null/undefined/exist/typeof/lengthOf/oneOf/match(regex)/have.property, a named test(\"...\", fn) wrapper's description threaded through as the assertion message, and require()/import calls (safe, since Voiden's JS scripting engine runs each script in a real Node.js subprocess) — otherwise commented out in full for manual review",
+        "src/skill.md — full field-mapping tables for all three formats (.bru, environment file, OpenCollection, plus the directory-based variant), CRUD-consolidation guidance for generating .void files directly from a raw collection, and the complete script-translation matcher reference"
+      ],
+      "Fixed": [
+        "ohm-js's dual CJS/ESM package shape crashed at import time under Vite (a real, encountered \"r.grammar is not a function\" error) — aliased to its CJS entry in the build config",
+        "The classic .bru single-file import path had its own separate, never-updated buildScriptBlock function shadowing the shared, translator-wired one — every script on this path rendered fully commented regardless of how safely it would have translated, silently making live script translation inert for the most common import path"
+      ]
+    }
+  }
+]

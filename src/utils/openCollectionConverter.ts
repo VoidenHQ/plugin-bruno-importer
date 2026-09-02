@@ -1,6 +1,6 @@
 import yaml from 'js-yaml';
 import type { OpenCollection, OcItem, OcHttpRequest, OcGraphQLRequest, OcGrpcRequest, OcWebSocketRequest, OcAuth, OcAssertion, OcScript, OcVariable, OcMultipartFormEntry } from './opencollectionTypes';
-import { isOcFolder, isOcHttpRequest, isOcGraphQLRequest, isOcGrpcRequest, isOcWebSocketRequest, looksLikeOpenCollection } from './opencollectionTypes';
+import { isOcFolder, isOcHttpRequest, isOcGraphQLRequest, isOcGrpcRequest, isOcWebSocketRequest, looksLikeOpenCollection, looksLikeStandaloneOcItem } from './opencollectionTypes';
 import { getVoidenApiHelpers } from './useVoidenApiHelpers';
 import {
   makeUid,
@@ -18,7 +18,7 @@ import {
   type NormalizedAssertionRow,
 } from './blockBuilders';
 
-export { looksLikeOpenCollection };
+export { looksLikeOpenCollection, looksLikeStandaloneOcItem };
 
 /**
  * Sanitize file/folder names to be filesystem-safe — identical logic to the
@@ -439,6 +439,47 @@ async function createSingleFile(item: OcItem, currentPath: string, fileName: str
 function getItemName(item: OcItem): string {
   return (item as { info?: { name?: string } }).info?.name || 'Bruno Request';
 }
+
+/**
+ * Imports a single OpenCollection-shaped request file that lives outside a
+ * whole-collection export — Bruno 3.0+'s directory-based layout, where each
+ * request is its own `info`/`http` (or `graphql`/`grpc`/`websocket`) YAML
+ * file with no `opencollection:` marker of its own (see
+ * looksLikeStandaloneOcItem's doc comment). Reuses convertOcItem() — the
+ * exact same per-item converter a whole-collection import dispatches
+ * through — so this produces an identical result to what that item would
+ * get if it were one node inside a full collection export instead.
+ */
+export const importStandaloneOcItem = async (
+  content: string,
+  activeProject: string,
+): Promise<{ success: true; path: string }> => {
+  if (!activeProject) {
+    throw new Error('No active project found');
+  }
+
+  let item: OcItem;
+  try {
+    item = JSON.parse(content);
+  } catch {
+    item = yaml.load(content) as OcItem;
+  }
+
+  const convertPromise = convertOcItem(item);
+  if (!convertPromise) {
+    throw new Error('Unrecognized Bruno request file (expected an http/graphql/grpc/websocket item)');
+  }
+  const fileContent = await convertPromise;
+
+  const fileName = sanitizeName(getItemName(item));
+  const result = await (window as any).electron?.files?.createVoid(activeProject, fileName);
+  if (!result?.path) {
+    throw new Error('Failed to create .void file');
+  }
+  await (window as any).electron?.files?.write(result.path, fileContent);
+
+  return { success: true, path: result.path };
+};
 
 async function walkOcItems(
   items: OcItem[],

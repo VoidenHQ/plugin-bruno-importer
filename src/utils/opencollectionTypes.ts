@@ -1,3 +1,5 @@
+import yaml from 'js-yaml';
+
 /**
  * OpenCollection YAML format (Bruno 3.0+'s "Export Collection" output) —
  * trimmed to the fields this importer actually handles. Field names verified
@@ -261,4 +263,36 @@ export function isOcWebSocketRequest(item: OcItem): item is OcWebSocketRequest {
  */
 export function looksLikeOpenCollection(content: string): boolean {
   return /(^|\n)\s*opencollection\s*:\s*['"]?[\d.]/.test(content);
+}
+
+/**
+ * The directory-based OpenCollection variant this file's own comment above
+ * used to only describe, never detect (a real, confirmed gap — Bruno 3.0+
+ * can lay a collection out as a folder tree of individual per-request YAML
+ * files plus one root `opencollection.yml`, instead of exporting everything
+ * as one whole-collection file). An individual request file in that layout
+ * has no `opencollection:` marker of its own — just `info`/`http` (or
+ * `graphql`/`grpc`/`websocket`) directly at the top level, identical in
+ * shape to one node of a whole-collection export's `items[]` array. Reuses
+ * the exact same per-item type guards a whole-collection import already
+ * dispatches on, so a standalone file recognized here converts through the
+ * identical, already-correct per-item converters.
+ */
+export function looksLikeStandaloneOcItem(content: string): boolean {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    try {
+      parsed = yaml.load(content);
+    } catch {
+      return false;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  // A whole-collection root (has its own "opencollection" key) or a folder
+  // item (has "items") isn't a standalone request — let the existing
+  // looksLikeOpenCollection() check own those instead.
+  if (typeof parsed.opencollection === 'string' || Array.isArray(parsed.items)) return false;
+  return isOcHttpRequest(parsed) || isOcGraphQLRequest(parsed) || isOcGrpcRequest(parsed) || isOcWebSocketRequest(parsed);
 }

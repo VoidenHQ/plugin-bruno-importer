@@ -2,7 +2,7 @@
   "id": "bruno-importer",
   "name": "Bruno Collection Importer",
   "description": "Import a Bruno (usebruno.com) .bru request/environment file, or a whole OpenCollection YAML/JSON export, into Voiden — HTTP, GraphQL, gRPC, and WebSocket requests, OAuth1/OAuth2 auth, and environment variables.",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "voidenVersion": ">=2.0.0",
   "author": "Voiden Team",
   "priority": 30,
@@ -63,6 +63,7 @@
   "features": [
     "Import a single Bruno (.bru) request file",
     "Import a whole OpenCollection YAML/JSON export (Bruno 3.0+'s Export Collection output) — walks folders and requests, producing one .void file per request",
+    "Import a single request from Bruno's directory-based OpenCollection layout (one request per YAML/JSON file, no opencollection: marker of its own) — the same per-item converter the whole-collection export uses",
     "Support for all HTTP methods (GET, POST, PUT, DELETE, PATCH, etc.)",
     "Import headers and convert to headers-table blocks",
     "Import query and path params (params:query / params:path) and convert to query-table / path-table blocks",
@@ -77,7 +78,7 @@
     "Convert auth (basic/bearer/apikey/digest/awsv4/ntlm/oauth1/oauth2 — all 4 oauth2 grant types) into a native auth block",
     "Import a Bruno environment file (environments/<name>.bru) as its own named Voiden environment, merged with any existing environments rather than overwriting them",
     "Convert a well-formed assert{} block into a live assertions-table block; entries using an unrecognized operator are imported disabled with the original expression preserved",
-    "Translate pre-request/post-response scripts and vars into live pre_script/post_script blocks when every line matches a recognized safe bru.*/req.*/res.*/expect() pattern — otherwise commented out in full for manual review",
+    "Translate pre-request/post-response scripts and vars into live pre_script/post_script blocks when every line matches a recognized safe bru.*/req.*/res.*/expect() pattern (eql/equal/above/below/at.least/at.most/within/closeTo/include/true/false/null/undefined/exist/typeof/lengthOf/oneOf/match/have.property, plus require()/import calls, which run safely since Voiden's JS scripting engine is a real Node.js subprocess) — otherwise commented out in full for manual review",
     "Sanitize file names for filesystem compatibility",
     "Uses voiden-rest-api helpers for consistent block generation",
     "Generates markdown with proper YAML frontmatter"

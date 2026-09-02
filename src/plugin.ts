@@ -1,7 +1,7 @@
 /**
  * Bruno Collection Importer Extension
  *
- * Supports three different Bruno file shapes:
+ * Supports four different Bruno file shapes:
  *
  * 1. A single classic Bruno `.bru` request file (http, graphql, grpc, or
  *    ws) — Bruno's native on-disk format, one request per file. Converts
@@ -14,6 +14,13 @@
  *    folder/request tree (closer in shape to a Postman/Insomnia export).
  *    Walks the tree, producing one .void file per request plus matching
  *    folders — see src/utils/openCollectionConverter.ts.
+ * 4. A single request file from Bruno 3.0+'s directory-based OpenCollection
+ *    layout — same `info`/`http` (or `graphql`/`grpc`/`websocket`) shape as
+ *    one item inside #3's tree, but as its own standalone YAML/JSON file
+ *    with no `opencollection:` marker of its own. Converts to exactly one
+ *    Voiden .void file via the same per-item converter #3 uses — see
+ *    looksLikeStandaloneOcItem/importStandaloneOcItem in
+ *    src/utils/opencollectionTypes.ts / openCollectionConverter.ts.
  *
  * BrunoImportButton picks which path to run based on which shape the
  * opened tab's content actually matches.
@@ -23,7 +30,7 @@ import { PluginContext } from '@voiden/sdk/ui';
 import React from 'react';
 import { BrunoImportButton } from './components/BrunoImportButton';
 import { looksLikeBruRequestFile, looksLikeBruEnvironmentFile } from './utils/types';
-import { looksLikeOpenCollection } from './utils/opencollectionTypes';
+import { looksLikeOpenCollection, looksLikeStandaloneOcItem } from './utils/opencollectionTypes';
 
 const brunoImportPlugin = (context: PluginContext) => {
   const showToast = (context as any)?.ui?.showToast as
@@ -47,7 +54,10 @@ const brunoImportPlugin = (context: PluginContext) => {
             return looksLikeBruRequestFile(c) || looksLikeBruEnvironmentFile(c);
           }
           if (title.endsWith('.yml') || title.endsWith('.yaml') || title.endsWith('.json')) {
-            return looksLikeOpenCollection(c);
+            // A whole-collection export (one file, has its own "opencollection"
+            // marker) or a single request from Bruno's directory-based layout
+            // (no marker of its own — see looksLikeStandaloneOcItem).
+            return looksLikeOpenCollection(c) || looksLikeStandaloneOcItem(c);
           }
           return false;
         },

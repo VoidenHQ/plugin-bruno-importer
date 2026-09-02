@@ -1,10 +1,22 @@
 ## Extension: Bruno Collection Importer
 
-Bruno exports come in **three structurally different shapes**, and this extension's button handles each differently:
+Bruno exports come in **four structurally different shapes**, and this extension's button handles each differently:
 
 1. **Classic `.bru` request files** — Bruno's native on-disk format: `bruno.json` plus a folder tree of individual `.bru` files, one request per file. Covers `http`, `graphql`, `grpc`, and `ws` typed requests (`meta.type`). Opening one and clicking **Import into Voiden** converts it to exactly one `.void` file.
 2. **Bruno environment files** (`environments/<name>.bru`) — no `meta{}` block, just `vars{}`/`vars:secret[]`. Opening one and clicking **Import into Voiden** merges its variables into Voiden's own environment YAML tree, as its own named environment.
 3. **OpenCollection YAML/JSON export** — the output of Bruno 3.0+'s **Export Collection** button (this is what most users actually reach for today, not a manual `.bru` folder copy). It's a *whole collection* — folders and requests together — serialized as **one YAML or JSON file**, structurally closer to a Postman/Insomnia export than to Bruno's own per-file layout. Opening this file and clicking **Import into Voiden** walks the whole tree and produces many `.void` files + folders in one go. Detect it by a top-level `opencollection: <version>` key (e.g. `opencollection: 1.0.0`) — a plain `.bru` file never has one.
+4. **A single request from Bruno 3.0+'s *directory-based* OpenCollection layout** — the same underlying format as #3, but laid out as a folder tree instead of exported as one whole-collection file: one root `opencollection.yml` (carrying the marker from #3) plus individual per-request YAML files that do **not** carry that marker themselves. Each request file is just `info`/`http` (or `graphql`/`grpc`/`websocket`) directly at the top level — e.g.:
+   ```yaml
+   info:
+     name: Get user
+     type: http
+     seq: 1
+   http:
+     method: GET
+     url: https://api.github.com/users/usebruno
+     auth: inherit
+   ```
+   Detect this shape by its *absence* of both an `opencollection:` key (rules out #3) and an `items`/`meta{}`+protocol-block pair (rules out #1) — just `info.type` (`http`/`graphql`/`grpc`/`websocket`, or omitted, which defaults to `http`) sitting alongside a matching `http`/`graphql`/`grpc`/`websocket` key. **Map it using the exact same field table as #3's "Mapping an OpenCollection item to Voiden blocks" below** — this is structurally one node of that tree, just living in its own file. Opening one and clicking **Import into Voiden** converts it to exactly one `.void` file, same as #1.
 
 **This skill is not about the button's output** — it teaches an agent how to **generate `.void` files directly from any of these raw formats**, e.g. when asked to "convert this Bruno collection/export into Voiden requests." Read `voiden-rest-api`'s skill alongside this one for full block syntax, `voiden-advanced-auth`'s skill for the `auth` block, `voiden-graphql`'s skill for `gqlquery`/`gqlvariables`, `voiden-sockets-grpcs`'s skill for `socket-request`/`proto`, and `simple-assertions`'s skill for `assertions-table`.
 
@@ -15,6 +27,8 @@ Bruno's gRPC and WebSocket requests carry a pre-authored request payload (`.bru`
 ### Default generation strategy: one file per resource, not per request
 
 Regardless of which format you're reading, don't default to one `.void` file per request. Instead: **for a group of sibling requests that operate on the same resource** — a folder of `.bru` files named `create-x.bru`/`get-x.bru`/`update-x.bru`/`delete-x.bru` (or numbered `seq`-ordered flows like `01-setup...bru`/`02-create...bru`), or an OpenCollection folder item containing several `http`-type child items — **generate ONE `.void` file for that group**, with each request becoming its own section via a `request-separator` (base skill's Multi-Request Files feature), not a separate file. Only fall back to one file per request when a request stands alone with no siblings worth grouping. Order sections by `meta.seq` (`.bru`) or `info.seq` (OpenCollection) when present — that's Bruno's own intended execution order.
+
+**A classic `.bru` collection is a folder tree, not one file — you must go discover its siblings, they won't come to you.** This is the one place Bruno genuinely differs from Postman/Insomnia in a way that changes how you should work, not just what you map: a Postman or Insomnia export is a *single JSON/YAML file* whose whole collection tree — every folder, every sibling request — is right there the moment you read it, so "these four requests are a CRUD group" is obvious from one read. Bruno's classic format has no such single file: each request is its own `.bru` file, and its siblings are simply other files sitting in the same directory (with `bruno.json` marking the collection root, and a `meta.seq` field in each file giving execution order). If you're asked to convert a Bruno collection and you only look at the one `.bru` file you were pointed to, **you will never see its siblings and will wrongly default to one file per request** — this is a real, observed failure mode, not a hypothetical. Before generating anything from a classic `.bru` file: **list the full contents of its containing folder (and any subfolders) and read every `.bru` file you find there** — that's the actual scope of "the collection," and only after seeing that full set can you correctly decide the resource-level grouping. **The same discovery step applies to the directory-based OpenCollection variant (#4 above)** — a standalone per-request YAML file has exactly the same "siblings are just other files in the same folder" shape as classic `.bru`, so list that folder too before deciding groupings; only the *whole-collection* OpenCollection export (#3) is exempt, since that format is already single-file and its whole tree is visible from the one read, structurally identical to Postman/Insomnia in this respect.
 
 ```markdown
 ---
@@ -41,13 +55,13 @@ attrs:
 type: request
 attrs:
   uid: "a1b2c3d4-e5f6-4789-ab01-cd23ef456789"
-  content:
-    - type: method
-      attrs: { uid: "...", method: POST, visible: true }
-      content: POST
-    - type: url
-      attrs: { uid: "..." }
-      content: "{{BASE_URL}}/api/articles"
+content:
+  - type: method
+    attrs: { uid: "...", method: POST, visible: true }
+    content: POST
+  - type: url
+    attrs: { uid: "..." }
+    content: "{{BASE_URL}}/api/articles"
 ---
 ```
 
@@ -84,20 +98,7 @@ attrs:
 ---
 ```
 
-```void
----
-type: request
-attrs:
-  uid: "..."
-  content:
-    - type: method
-      attrs: { uid: "...", method: GET, visible: true }
-      content: GET
-    - type: url
-      attrs: { uid: "..." }
-      content: "{{BASE_URL}}/api/articles/{{process.slug}}"
----
-```
+Add this section's `request` block the same shape as `Create Article`'s above (method `GET`, url `{{BASE_URL}}/api/articles/{{process.slug}}`) — the exact `request`/`method`/`url` structure isn't repeated a second time here on purpose: it's a core block owned by the base skill, not something this plugin skill redefines, so there's exactly one place that shape can drift out of sync instead of two.
 ```
 
 Keep going with the same pattern for `Update Article` (PUT/PATCH) and `Delete Article` (DELETE) sections. Section `label`s name the operation — don't add a redundant `## Create Article` heading (see "Placement" below).
@@ -150,9 +151,59 @@ Parse each `.bru` file's blocks directly (or via `@usebruno/lang`'s `bruToJsonV2
 
 ### Translating `bru.*`/`expect` scripts into live `voiden.*` code
 
-Bruno scripts use the `bru.*`/`req.*`/`res.*` API; Voiden scripts use `voiden.*`/`vd.*` (see `voiden-scripting`'s skill for the full reference) — not source-compatible, so a blanket "just copy the script" isn't safe. But a real, useful subset maps directly, and translating those live is worth doing — **as long as it's all-or-nothing per script**: translate the whole thing only if *every* line resolves to a recognized pattern below; if even one line doesn't, leave the *entire* script commented exactly as before. Never a half-translated, half-commented script.
+Bruno scripts use the `bru.*`/`req.*`/`res.*` API; Voiden scripts use the `voiden.*`/`vd.*` object — not source-compatible, so a blanket "just copy the script" isn't safe. But a real, useful subset maps directly, and translating those live is worth doing — **as long as it's all-or-nothing per script**: translate the whole thing only if *every* line resolves to a recognized pattern below; if even one line doesn't, leave the *entire* script commented exactly as before. Never a half-translated, half-commented script. Every generated `pre_script`/`post_script` block from this importer uses `attrs.language: javascript` — Bruno's `bru.*`/`req.*`/`res.*` scripts are always JS, so there's no Python/Shell target to consider here.
 
-**Safe to translate:**
+#### The full `voiden.*` surface a translated script can use
+
+This is the complete API — not a subset — so you have full context for what a translated line is allowed to become, and what's available if you're hand-writing additional assertions beyond what the original script had. Read `voiden-scripting`'s own skill for Python/Shell equivalents; only the JavaScript form is relevant here.
+
+| Object | Member | Read/Write | Description |
+|---|---|---|---|
+| `voiden.request` | `.url` | rw | Request URL (pre_script only) |
+| | `.method` | rw | HTTP method |
+| | `.headers` | rw | Assign `{key,value}`, an array of them, or a `{Name:val}` map to **replace all** |
+| | `.headers.push({key,value,enabled?})` | append | Add one header without replacing existing ones |
+| | `.body` | rw | Request body — must be a string |
+| | `.queryParams` | rw | Assign to **replace all**; `{key,value,enabled?}[]` |
+| | `.queryParams.push({key,value,enabled?})` | append | Add one query param |
+| | `.pathParams` | rw | Assign to **replace all**; `{key,value,enabled?}[]` |
+| | `.pathParams.push({key,value,enabled?})` | append | Add one path param |
+| `voiden.response` | `.status` | rw (post_script) | HTTP status code, number |
+| | `.statusText` | rw (post_script) | HTTP status text string |
+| | `.body` | rw (post_script) | Already parsed if JSON, otherwise a string |
+| | `.headers` | read-only | `Record<string,string>` |
+| | `.cookies` | read-only | `Record<string,{value:string,...}>` |
+| | `.time` | read-only | Response time, ms |
+| | `.size` | read-only | Response size, bytes |
+| `voiden.env.get(key)` | — | read-only | Active environment value |
+| `voiden.variables.get(key)` | — | read | Runtime variable (synchronous) |
+| `voiden.variables.set(key, value)` | — | write | Persists across requests — use `{{process.key}}` (not `{{key}}`) to read it outside a script |
+| `voiden.log(...args)` | — | — | Logs at `log` level |
+| `voiden.log(level, ...args)` | — | — | `level` one of `log`/`info`/`debug`/`warn`/`error` |
+| `voiden.assert(actual, operator, expected, message?)` | — | — | Records one structured assertion — see the full operator table below |
+| `voiden.cancel()` | — | — | Cancels the pending request — pre_script only |
+
+There is no `voiden.request.cookies`, no outbound-fetch primitive (`bru.sendRequest`/`bru.runRequest`'s equivalent doesn't exist), no runner-flow-control object, and no `unset`/`remove`/`clear` operations on variables or headers — only get/set and push. Keep this in mind when deciding whether a `bru.*`/`req.*`/`res.*` call has a real target: if it isn't in the table above, it doesn't exist in `voiden.*`, full stop.
+
+#### voiden.assert — every operator, and which Chai matcher(s) reach it
+
+| Operator group | Semantics | Chai matcher(s) that translate to it |
+|---|---|---|
+| `"=="` / `"eq"` / `"equal"` | Loose equality (`actual == expected`) | `.to.eql(y)` |
+| `"==="` | Strict equality (`actual === expected`) | `.to.equal(y)`, `.to.be.null` (against literal `null`), `.to.be.undefined` (against literal `undefined`) |
+| `"!="` / `"!=="` / `"neq"` / `"notequal"` | Not equal / strict not equal | `.to.not.eql(y)` → `"!="`; `.to.not.equal(y)` → `"!=="`; `.to.not.be.null` → `"!=="` against `null`; `.to.not.be.undefined` → `"!=="` against `undefined` |
+| `">"` / `"greater"` / `"greaterthan"` | Numeric greater than | `.to.be.above(y)` / `.to.be.greaterThan(y)` |
+| `">="` / `"gte"` | Greater than or equal | `.to.be.at.least(y)` / `.to.be.gte(y)`; also the lower bound of `.to.be.within(min,max)` / `.to.be.closeTo(expected,delta)` |
+| `"<"` / `"less"` / `"lessthan"` | Numeric less than | `.to.be.below(y)` / `.to.be.lessThan(y)` |
+| `"<="` / `"lte"` | Less than or equal | `.to.be.at.most(y)` / `.to.be.lte(y)`; also the upper bound of `.to.be.within(min,max)` / `.to.be.closeTo(expected,delta)` |
+| `"contains"` / `"includes"` | `actual.includes(String(expected))` if `actual` is a string; `actual.includes(expected)` if `actual` is an array | `.to.include(y)` / `.to.contain(y)`; also `.to.be.oneOf([...])`, reversed — the options array is passed as `actual`, the checked value as `expected` |
+| `"matches"` / `"regex"` | `new RegExp(String(expected)).test(String(actual))` — `expected` must be the regex's **plain source text**, no `/.../ ` delimiters and no flags | `.to.match(/pattern/)` — **only** when the argument is a literal, flag-less regex |
+| `"truthy"` | `Boolean(actual)` | `.to.be.true` / `.to.be.ok`; also `.to.have.property(key)` (approximated) |
+| `"falsy"` | `!actual` | `.to.be.false`; also `.to.not.have.property(key)` (approximated) |
+
+Two matchers have no single operator and expand into **two** `voiden.assert` calls instead: `.to.be.within(min, max)` → `>=` min **and** `<=` max; `.to.be.closeTo(expected, delta)` → `>=` (expected − delta) **and** `<=` (expected + delta), with the arithmetic written into the generated code itself.
+
+#### Safe to translate: variables & field access
 
 | Bruno | Voiden | Notes |
 |---|---|---|
@@ -162,15 +213,44 @@ Bruno scripts use the `bru.*`/`req.*`/`res.*` API; Voiden scripts use `voiden.*`
 | `req.getHeader(n)`/`setHeader(n,v)` | `voiden.request.headers[n]` / `.push(...)` | The `push` target takes a `{key,value}` object, not Bruno's `(name, value)` pair — this is an approximate shape match, not identical calling convention. |
 | `res.status`/`.getStatus()`, `.body`/`.getBody()`, `.getHeader(n)`, `.responseTime`/`.getResponseTime()` | `voiden.response.status`, `.body`, `.headers[n]`, `.time` | Both property and method forms are real Bruno syntax; both translate. |
 | `console.log(...)` | `voiden.log(...)` | |
-| `test(name, function(){ ... })` wrapper | *(dropped — assertions become flat top-level `voiden.assert` calls)* | Bruno also allows bare top-level `expect(...)` with no `test()` wrapper at all (confirmed in the RealWorld/Conduit fixture) — translated the same way either way. |
+
+#### Safe to translate: assertions
+
+| Bruno | Voiden | Notes |
+|---|---|---|
+| `test(name, function(){ ... })` wrapper | *(dropped — assertions become flat top-level `voiden.assert` calls)* | Bruno also allows bare top-level `expect(...)` with no `test()` wrapper at all (confirmed in the RealWorld/Conduit fixture) — translated the same way either way. The wrapper's `name` string isn't discarded when present, though — it's threaded through as the `message` argument on every `voiden.assert` call generated from statements inside that block. A bare `expect(...)` with no enclosing `test()` gets no message argument. |
 | `expect(x).to.eql(y)` / `.equal(y)` / `.not.eql(y)` / `.not.equal(y)` | `voiden.assert(x, "==", y)` / `"==="` / `"!="` / `"!=="` | |
 | `expect(x).to.be.above/below/at.least/at.most(y)` | `voiden.assert(x, ">"/"<"/">="/"<=", y)` | Also `.greaterThan`/`.lessThan`/`.gte`/`.lte` spellings. |
+| `expect(x).to.be.within(min, max)` | `voiden.assert(x, ">=", min)` **and** `voiden.assert(x, "<=", max)` (two calls) | The negated form (`.to.not.within(...)`) does **not** translate — that's an OR of two conditions, which two independent `voiden.assert` calls can't express. |
+| `expect(x).to.be.closeTo(expected, delta)` | `voiden.assert(x, ">=", expected-delta)` **and** `voiden.assert(x, "<=", expected+delta)` (two calls) | Same two-call shape as `.within`. |
 | `expect(x).to.include/contain(y)` | `voiden.assert(x, "contains", y)` | |
 | `expect(x).to.be.true/.ok` / `.to.be.false` | `voiden.assert(x, "truthy")` / `voiden.assert(x, "falsy")` | |
+| `expect(x).to.be.null` / `.to.not.be.null` | `voiden.assert(x, "===", null)` / `voiden.assert(x, "!==", null)` | Strict — matches Chai's own strict `null` check exactly. |
+| `expect(x).to.be.undefined` / `.to.not.be.undefined` | `voiden.assert(x, "===", undefined)` / `voiden.assert(x, "!==", undefined)` | |
+| `expect(x).to.exist` / `.to.not.exist` | `voiden.assert(x, "!=", null)` / `voiden.assert(x, "==", null)` | Chai's `.exist` means "not null AND not undefined" — expressed exactly with **loose** `!=`/`==` against `null`. |
+| `expect(x).to.be.a("string"\|"number"\|"boolean"\|"function"\|"undefined"\|"bigint"\|"symbol")` | `voiden.assert(typeof (x), "==", "typename")` | Only this exact allowlist of `typeof`-safe type names translates — `"array"`/`"object"`/`"null"`/`"date"` etc. do **not**, because `typeof` can't distinguish them. |
+| `expect(x).to.have.lengthOf(n)` | `voiden.assert((x).length, "==", n)` | Exact for both strings and arrays. |
+| `expect(x).to.be.oneOf([...])` | `voiden.assert([...], "contains", x)` | Sides swap — the options array becomes `actual`, the checked value becomes `expected`. |
+| `expect(x).to.(not.)have.property(key)` | `voiden.assert((x)[key], "truthy")` / `voiden.assert((x)[key], "falsy")` | Approximated via truthiness of the bracket access, since there's no dedicated "has property" operator. Not exact — a property present but holding a falsy value (`0`, `""`, `false`) reads as "missing" — but right for the common case of checking a key exists on a JSON body. |
+| `expect(x).to.match(/pattern/)` | `voiden.assert(x, "matches", "pattern")` | Only when the argument is a **literal, flag-less** regex — the delimiters and any flags get stripped when translating. |
 
-**Never translate, always leave commented:** `expect(x).to.match(regex)` (voiden.assert's exact handling of a RegExp value for `"matches"` isn't confirmed), `.to.have.property/lengthOf/be.a(...)` or Bruno's own `jsonBody`/`jsonSchema` matchers (no `voiden.assert` equivalent), `bru.sendRequest`/`bru.runRequest`/`bru.runner.*` (no equivalent in Voiden's scripting API), any control flow, or anything else not in the table above. Also never translate a bare `res.body`/`req.getBody()` wrapped in `JSON.parse(...)` — Voiden's `voiden.response.body`/`voiden.request.body` are already parsed if JSON, so re-parsing would throw at runtime; a script doing this needs a human to resolve the mismatch, not an automatic translation that would ship broken.
+**Never translate, always leave commented** — with the specific reason:
+
+| Pattern | Why it doesn't translate |
+|---|---|
+| `.to.match(/pattern/i)` or any flagged regex, or `.to.match(aVariable)` | `voiden.assert`'s `"matches"` operator can't carry regex flags through, and a non-literal argument's `String(...)` form might include `/.../ ` delimiters that would corrupt the pattern. |
+| `.to.not.be.within(...)` / `.to.not.match(...)` | Negating a range or regex check is an OR of two conditions — two independent `voiden.assert` calls can only express AND, not OR. |
+| `.to.be.a("array")` / `.to.be.an("object")` / `.to.be.a("date")` | `typeof` can't distinguish arrays, plain objects, dates, or `null` from each other or from a generic object. |
+| `.to.have.property("key", value)` (the two-argument form checking both existence *and* value) | Only the one-argument existence-check form translates; the truthy/falsy approximation doesn't capture an exact-value check. |
+| `.to.have.keys(...)` / `.to.have.all.keys(...)` / `.to.have.members([...])` / `.to.include.members([...])` | Set-equality/membership across multiple values at once — no `voiden.assert` operator expresses this. |
+| Bruno's own `jsonBody`/`jsonSchema` post-response assertions, `.to.throw(...)`, `.to.be.instanceOf(...)`, `.to.respondTo(...)`, `.to.satisfy(fn)`, `.to.change/increase/decrease(...)`, `.to.be.empty` | No `voiden.assert` equivalent, or the semantics can't be reduced to a single flat assertion (see the Postman/Insomnia skills' equivalent tables for the same reasoning per-matcher — it's identical since all three embed the same Chai library). |
+| `bru.sendRequest`/`bru.runRequest`/`bru.runner.*` | No outbound-fetch or runner-flow-control primitive in `voiden.*` scripting. |
+| A bare `res.body`/`req.getBody()` wrapped in `JSON.parse(...)` | Voiden's `voiden.response.body`/`voiden.request.body` are already parsed if JSON, so re-parsing would throw at runtime — this needs a human to resolve the mismatch. |
+| Any control flow (`if`/`for`/`while`/`switch`), custom helper functions, or anything else not in a table above | Out of scope for a line-by-line mechanical translator — this isn't a JS parser. |
 
 A `bru.*`/`req.*`/`res.*` call nested *inside* an assertion's expression (e.g. `expect(x).to.eql(bru.getVar("y"))` — a real pattern from the RealWorld/Conduit fixture) is fine — substitutions apply anywhere in an expression. But the reverse check matters too: if a captured expression still contains an untranslated call after substitution, that line — and therefore the whole script — must fall back to commented, not ship with a leftover reference inside otherwise-live code.
+
+A plain `require('moment')`/`require('lodash')`-style call (Bruno itself bundles a set of npm packages for this) is **not** a reason to fall back — Voiden's JavaScript scripting engine runs each script in a real Node.js subprocess rooted at the active project directory, so `require(...)` resolves exactly as it would in any Node script, against that project's own `node_modules`. Leave it as-is when translating the rest of the script live; whether that specific package is actually installed is a normal runtime concern for the user, not a translation-safety one.
 
 ### Mapping a Bruno environment file to Voiden
 

@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { importBruRequest, importBruEnvironment } from '../utils/converter';
 import { looksLikeBruEnvironmentFile } from '../utils/types';
-import { importOpenCollection, looksLikeOpenCollection } from '../utils/openCollectionConverter';
+import { importOpenCollection, looksLikeOpenCollection, importStandaloneOcItem, looksLikeStandaloneOcItem } from '../utils/openCollectionConverter';
 import { X, XCircle } from 'lucide-react';
 
 interface BrunoImportButtonProps {
@@ -86,6 +86,14 @@ export const BrunoImportButton = ({ tab, showToast }: BrunoImportButtonProps) =>
         // environment's name comes from its filename (Bruno's own convention).
         const envName = (tab.title || 'Bruno Environment').replace(/\.bru$/i, '');
         await importBruEnvironment(content, envName, activeProject);
+      } else if (looksLikeStandaloneOcItem(content)) {
+        // A single request from Bruno's directory-based OpenCollection
+        // layout — same info/http shape as one item in a whole-collection
+        // export's tree, but its own standalone file with no
+        // "opencollection:" marker. See looksLikeStandaloneOcItem's doc
+        // comment for why this needs its own branch instead of falling
+        // through to the classic .bru path below.
+        await importStandaloneOcItem(content, activeProject);
       } else {
         // Single .bru request file
         await importBruRequest(content, activeProject);
