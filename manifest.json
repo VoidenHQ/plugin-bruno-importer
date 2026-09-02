@@ -66,7 +66,7 @@
     "Import a single request from Bruno's directory-based OpenCollection layout (one request per YAML/JSON file, no opencollection: marker of its own) — the same per-item converter the whole-collection export uses",
     "Support for all HTTP methods (GET, POST, PUT, DELETE, PATCH, etc.)",
     "Import headers and convert to headers-table blocks",
-    "Import query and path params (params:query / params:path) and convert to query-table / path-table blocks",
+    "Import query and path params (params:query / params:path) and convert to query-table / path-table blocks, falling back to parsing the URL's own query string when a request has one but no explicit params:query list",
     "Convert :param URL segments to Voiden's {param} placeholder style",
     "Import JSON, XML, and plain-text bodies",
     "Import form-urlencoded bodies as url-table blocks",
